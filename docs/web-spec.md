@@ -151,7 +151,7 @@ CREATE TABLE admin_sessions (
 | 路径 | 方法 | 内容 |
 | --- | --- | --- |
 | `/` | GET | 项目介绍；"随机一句"区块（浏览器 JS 同源调用 `/api/v1/sentences/random`，无 JS 时显示静态说明）；最近通过投稿前 20 条（内容、分类、昵称）；入口链接 |
-| `/docs` | GET | 接口文档：端点、参数、响应结构、错误格式与 `code` 表、`curl` 和 `fetch` 示例、限制说明。当前启用分类表由服务端从数据库读取渲染，其余内容静态 |
+| `/docs` | GET | 接口文档：端点、参数、响应结构、错误格式与 `code` 表、`curl` 和 `fetch` 示例、限制说明。当前启用分类表来自公开数据缓存（第 4.1 节），其余内容静态 |
 | `/submit` | GET | 投稿表单 |
 | `/submit` | POST | 提交投稿；成功 `303` 到 `/submit/done`，失败重新渲染表单并标注字段错误 |
 | `/submit/done` | GET | 感谢页，说明审核流程和预期时间 |
@@ -161,7 +161,29 @@ CREATE TABLE admin_sessions (
 
 "随机一句"用浏览器调用而不是服务端查库，原因是这同时演示了接口，且不让 `sentence-web` 承担读流量。
 
-"最近通过"来自 `submissions status=1 JOIN sentences`，按 `reviewed_at DESC`，进程内缓存 60 秒。只展示 `sentences.status = 1` 的记录，被停用的自动消失。
+### 4.1 公开数据缓存
+
+前台页面**不直接查询数据库**。`sentence-web` 持有一份进程内公开数据缓存，前台请求只读它：
+
+- 启用分类列表（`code`、`name`、`sort_order`、语句数）。
+- 最近通过的投稿 20 条（内容、分类、昵称），来自 `submissions status=1 JOIN sentences WHERE sentences.status=1`，按 `reviewed_at DESC`。
+- 句子库导出 JSON（第 8 节）。
+- 对应的 `dataset_version`。
+
+缓存在同一个只读 `REPEATABLE READ` 事务中一次性生成，原子切换，与读 API 的快照语义一致。生成失败保留上一版本并记录错误。
+
+刷新时机：
+
+1. 启动时加载，失败则启动失败。
+2. 本进程任何递增版本的事务提交成功后，立即在后台重新生成。写入者是自己，不需要等待轮询。
+3. 每 `SNAPSHOT_POLL_INTERVAL` 轮询 `dataset_versions.version`，与缓存版本不同时重新生成，用于捕获外部导入。
+4. 审核通过或拒绝不改变版本时，"最近通过"仍可能变化（通过会递增版本，拒绝不影响该列表），因此第 2 条覆盖了所有本进程引起的变化。
+
+同一时刻最多一个生成任务在跑；重复触发合并为一次。
+
+数据库不可用时前台照常显示缓存内容，只有需要写库的操作（投稿、后台）失败。
+
+必须走数据库、不能用缓存代替的读取：投稿写入前的待审队列计数和待审重复检查（要看最新状态）、后台全部页面（管理员看的是数据库当前状态而不是副本）。
 
 所有前台页面返回 `Cache-Control: no-store`（`/dataset/*` 例外，见第 8 节）。`GET` 路径同时接受 `HEAD`；`OPTIONS` 返回 `204` 和 `Allow`。未知路径 `404`，已知路径错误方法 `405`。错误页面是 HTML；`Accept: application/json` 时返回开发规格第 10 节格式的 `application/problem+json`。
 
@@ -189,7 +211,7 @@ CREATE TABLE admin_sessions (
 1. **表单令牌**：`GET /submit` 签发 HMAC-SHA256 令牌（`WEB_SECRET_KEY` 签名，含签发时间和随机数），`POST` 必须携带。签发后 5 秒内或 2 小时后提交视为无效。
 2. **蜜罐字段**：表单含一个 CSS 隐藏、名字看似正常的字段；非空即拒绝，返回与成功相同的感谢页，不落库。
 3. **每 IP 限流**：滑动窗口，默认每小时 5 条、每天 20 条。真实 IP 用开发规格第 11.2 节相同规则解析，共用 `TRUSTED_PROXY_CIDRS`。
-4. **待审队列上限**：`status = 0` 总数达到 `SUBMISSION_PENDING_LIMIT`（默认 1000）时拒绝新投稿，页面说明"审核队列已满"。计数进程内缓存 30 秒。
+4. **待审队列上限**：`status = 0` 总数达到 `SUBMISSION_PENDING_LIMIT`（默认 1000）时拒绝新投稿，页面说明"审核队列已满"。计数实时查询（`status` 有索引），不用缓存，避免缓存期内被灌超。
 5. **待审重复**：同分类且 `content_sha256` 相同的待审记录已存在时拒绝，提示"相同内容已在审核中"。
 
 限流状态只在进程内存，单实例部署足够。多实例时各实例独立计数，实际上限随实例数放大；届时改 OpenResty 限流，不引入共享存储。
@@ -309,7 +331,7 @@ sentence-web admin reset-password --username <name>
 
 `GET /dataset/sentences.json` 返回当前全部已发布语句和全部启用分类，**格式与 [导入格式](import-format.md) 完全一致**，可以被 `sentence-api import` 原样导入。不含 `id`、`length`、`status`、时间字段、投稿人信息。
 
-- 进程按 `SNAPSHOT_POLL_INTERVAL` 轮询 `dataset_versions.version`，变化时在一致性只读事务中重新生成导出内容并缓存在内存。
+- 导出内容是公开数据缓存（第 4.1 节）的一部分，随缓存一起生成和切换。
 - 响应头：`Content-Type: application/json; charset=utf-8`、`Content-Disposition: attachment; filename="sentences-<version>.json"`、`ETag: "<version>"`、`Cache-Control: public, max-age=3600`。支持 `If-None-Match` 返回 `304`。
 - 生成失败时保留上一版本缓存并记录错误；进程启动时必须生成成功才 ready。
 
@@ -353,7 +375,7 @@ sentence-web admin reset-password --username <name>
 | `SUBMISSION_RATE_PER_DAY` | 否 | `20` | 每 IP 每天 |
 | `SUBMISSION_PENDING_LIMIT` | 否 | `1000` | 待审队列上限 |
 | `SUBMISSION_RETENTION` | 否 | `2160h` | 审核元数据保留期 |
-| `SNAPSHOT_POLL_INTERVAL` | 否 | `60s` | 导出缓存的版本轮询间隔 |
+| `SNAPSHOT_POLL_INTERVAL` | 否 | `60s` | 公开数据缓存的版本轮询间隔（兜底外部导入；本进程写入后立即刷新，不依赖它） |
 | `TRUSTED_PROXY_CIDRS` | 否 | 空 | 与读 API 相同规则 |
 | `LOG_LEVEL` | 否 | `info` | |
 | `SHUTDOWN_TIMEOUT` | 否 | `10s` | |
@@ -381,9 +403,9 @@ sentence-web admin reset-password --username <name>
 
 ## 12. 启停
 
-启动顺序：加载配置 → 连接数据库 → `CheckSchema` 版本 2 → 生成导出缓存 → 启动 HTTP → 启动版本轮询与清理任务。导出生成失败则启动失败。
+启动顺序：加载配置 → 连接数据库 → `CheckSchema` 版本 2 → 生成公开数据缓存 → 启动 HTTP → 启动版本轮询与清理任务。缓存生成失败则启动失败。
 
-`/readyz`：数据库最近一次探测成功且导出缓存存在，且未进入退出流程。
+`/readyz`：公开数据缓存存在且未进入退出流程。数据库暂时不可用不影响 ready，与读 API 的语义一致；数据库状态通过指标报告。
 
 优雅退出与开发规格第 14.1 节一致：标记退出、停止接收、等待在途请求与后台任务、关闭连接池、共同期限。
 
