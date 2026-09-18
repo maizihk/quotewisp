@@ -2,12 +2,16 @@ package database
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestSafeDriverLoggerDoesNotForwardArguments(t *testing.T) {
@@ -66,5 +70,40 @@ func TestNormalizeDSNQuestionMarkInPassword(t *testing.T) {
 	}
 	if _, e := NormalizeDSN("u:p?word@tcp(localhost:3306)/db?timeout=0s", false); e == nil {
 		t.Fatal("accepted explicit zero timeout")
+	}
+}
+
+func TestCheckSchema(t *testing.T) {
+	q := regexp.QuoteMeta("SELECT version, dirty FROM schema_migrations LIMIT 1")
+	cases := []struct {
+		name    string
+		version uint
+		dirty   bool
+		ok      bool
+	}{
+		{name: "version2", version: RequiredSchemaVersion, dirty: false, ok: true},
+		{name: "version1", version: 1, dirty: false, ok: false},
+		{name: "dirty", version: RequiredSchemaVersion, dirty: true, ok: false},
+		{name: "version3", version: 3, dirty: false, ok: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, e := sqlmock.New()
+			if e != nil {
+				t.Fatal(e)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			mock.ExpectQuery(q).WillReturnRows(sqlmock.NewRows([]string{"version", "dirty"}).AddRow(tc.version, tc.dirty))
+			err := CheckSchema(context.Background(), db)
+			if tc.ok && err != nil {
+				t.Fatalf("expected success: %v", err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatal("expected failure")
+			}
+			if e = mock.ExpectationsWereMet(); e != nil {
+				t.Fatal(e)
+			}
+		})
 	}
 }

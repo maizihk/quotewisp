@@ -22,6 +22,8 @@ import (
 	"sentence-api/migrations"
 )
 
+const RequiredSchemaVersion uint = 2
+
 type PoolConfig struct {
 	MaxOpenConns, MaxIdleConns int
 	ConnMaxLifetime            time.Duration
@@ -163,7 +165,7 @@ func CheckSchema(ctx context.Context, db *sql.DB) error {
 	if e != nil {
 		return e
 	}
-	if d || v != 1 {
+	if d || v != RequiredSchemaVersion {
 		return fmt.Errorf("unsupported schema state: version=%d dirty=%t", v, d)
 	}
 	return nil
@@ -285,7 +287,7 @@ func migrateRun(raw string, steps int, up bool) error {
 	if dirty {
 		return errors.New("migration state is dirty")
 	}
-	if !errors.Is(ve, migrate.ErrNilVersion) && v > 1 {
+	if !errors.Is(ve, migrate.ErrNilVersion) && v > RequiredSchemaVersion {
 		return errors.New("unknown migration version")
 	}
 	if up {

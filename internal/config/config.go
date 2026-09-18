@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Mode uint8
@@ -18,22 +19,31 @@ const (
 	ModeService Mode = iota
 	ModeImport
 	ModeMigrate
+	ModeWeb
+	ModeWebAdmin
 )
 
 type Config struct {
-	HTTPAddr             string
-	MYSQLDSN             string
-	MySQLMaxOpenConns    int
-	MySQLMaxIdleConns    int
-	MySQLConnMaxLifetime time.Duration
-	SnapshotPollInterval time.Duration
-	SnapshotLoadTimeout  time.Duration
-	ImportTimeout        time.Duration
-	ReloadToken          string
-	CORSAllowedOrigins   []string
-	TrustedProxyCIDRs    []netip.Prefix
-	LogLevel             slog.Level
-	ShutdownTimeout      time.Duration
+	HTTPAddr               string
+	MYSQLDSN               string
+	MySQLMaxOpenConns      int
+	MySQLMaxIdleConns      int
+	MySQLConnMaxLifetime   time.Duration
+	SnapshotPollInterval   time.Duration
+	SnapshotLoadTimeout    time.Duration
+	ImportTimeout          time.Duration
+	ReloadToken            string
+	CORSAllowedOrigins     []string
+	TrustedProxyCIDRs      []netip.Prefix
+	LogLevel               slog.Level
+	ShutdownTimeout        time.Duration
+	WebSecretKey           string
+	SiteContact            string
+	CookieSecure           bool
+	SubmissionRatePerHour  int
+	SubmissionRatePerDay   int
+	SubmissionPendingLimit int
+	SubmissionRetention    time.Duration
 }
 
 func Load(mode Mode) (Config, error) { return load(mode, os.LookupEnv) }
@@ -54,7 +64,7 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 			return c, fmt.Errorf("HTTP_ADDR port is invalid")
 		}
 	}
-	if mode == ModeService || mode == ModeImport {
+	if mode == ModeService || mode == ModeImport || mode == ModeWeb || mode == ModeWebAdmin {
 		if c.MySQLMaxOpenConns, err = integer(lookup, "MYSQL_MAX_OPEN_CONNS", 10, 1); err != nil {
 			return c, err
 		}
@@ -68,7 +78,55 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 			return c, err
 		}
 	}
-	if mode == ModeService {
+	if mode == ModeWeb {
+		if c.HTTPAddr, err = str(lookup, "HTTP_ADDR", ":8081", false); err != nil {
+			return c, err
+		}
+		if _, port, e := net.SplitHostPort(c.HTTPAddr); e != nil {
+			return c, fmt.Errorf("HTTP_ADDR is invalid")
+		} else if n, e := strconv.Atoi(port); e != nil || n < 1 || n > 65535 {
+			return c, fmt.Errorf("HTTP_ADDR port is invalid")
+		}
+		if c.WebSecretKey, err = required(lookup, "WEB_SECRET_KEY"); err != nil {
+			return c, err
+		}
+		if !validToken(c.WebSecretKey) {
+			return c, fmt.Errorf("WEB_SECRET_KEY must be 32-256 printable non-whitespace ASCII bytes")
+		}
+		if c.SiteContact, err = siteContact(lookup); err != nil {
+			return c, err
+		}
+		if c.CookieSecure, err = boolEnv(lookup, "COOKIE_SECURE", true); err != nil {
+			return c, err
+		}
+		if c.SubmissionRatePerHour, err = integer(lookup, "SUBMISSION_RATE_PER_HOUR", 5, 1); err != nil {
+			return c, err
+		}
+		if c.SubmissionRatePerDay, err = integer(lookup, "SUBMISSION_RATE_PER_DAY", 20, 1); err != nil {
+			return c, err
+		}
+		if c.SubmissionRatePerDay < c.SubmissionRatePerHour {
+			return c, fmt.Errorf("SUBMISSION_RATE_PER_DAY must be greater than or equal to SUBMISSION_RATE_PER_HOUR")
+		}
+		if c.SubmissionPendingLimit, err = integer(lookup, "SUBMISSION_PENDING_LIMIT", 1000, 1); err != nil {
+			return c, err
+		}
+		if c.SubmissionRetention, err = duration(lookup, "SUBMISSION_RETENTION", 2160*time.Hour); err != nil {
+			return c, err
+		}
+		if c.SnapshotPollInterval, err = duration(lookup, "SNAPSHOT_POLL_INTERVAL", time.Minute); err != nil {
+			return c, err
+		}
+		if c.TrustedProxyCIDRs, err = prefixes(lookup); err != nil {
+			return c, err
+		}
+		if c.LogLevel, err = level(lookup); err != nil {
+			return c, err
+		}
+		if c.ShutdownTimeout, err = duration(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second); err != nil {
+			return c, err
+		}
+	} else if mode == ModeService {
 		if c.SnapshotPollInterval, err = duration(lookup, "SNAPSHOT_POLL_INTERVAL", time.Minute); err != nil {
 			return c, err
 		}
@@ -239,4 +297,28 @@ func validToken(s string) bool {
 		}
 	}
 	return true
+}
+func boolEnv(l func(string) (string, bool), k string, d bool) (bool, error) {
+	v, ok := l(k)
+	if !ok {
+		return d, nil
+	}
+	switch v {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s is invalid", k)
+	}
+}
+func siteContact(l func(string) (string, bool)) (string, error) {
+	v, err := required(l, "SITE_CONTACT")
+	if err != nil {
+		return "", err
+	}
+	if len(v) > 256 || !utf8.ValidString(v) {
+		return "", fmt.Errorf("SITE_CONTACT is invalid")
+	}
+	return v, nil
 }

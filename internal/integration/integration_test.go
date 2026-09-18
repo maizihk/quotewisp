@@ -80,6 +80,34 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 	if err = database.CheckSchema(ctx, db); err != nil {
 		t.Fatal(err)
 	}
+	if v, dirty, e := database.SchemaVersion(ctx, db); e != nil || dirty || v != database.RequiredSchemaVersion {
+		t.Fatalf("schema version=%d dirty=%t err=%v", v, dirty, e)
+	}
+	var webTables int
+	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('admin_users','submissions','admin_sessions')").Scan(&webTables); err != nil || webTables != 3 {
+		t.Fatalf("web tables missing count=%d err=%v", webTables, err)
+	}
+	if err = database.MigrateDown(testDSN, 1); err != nil {
+		t.Fatal(err)
+	}
+	if v, dirty, e := database.SchemaVersion(ctx, db); e != nil || dirty || v != 1 {
+		t.Fatalf("after down version=%d dirty=%t err=%v", v, dirty, e)
+	}
+	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('admin_users','submissions','admin_sessions')").Scan(&webTables); err != nil || webTables != 0 {
+		t.Fatalf("web tables remain after down count=%d err=%v", webTables, err)
+	}
+	if err = database.CheckSchema(ctx, db); err == nil {
+		t.Fatal("CheckSchema accepted version 1")
+	}
+	if err = database.MigrateUp(testDSN); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.CheckSchema(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if v, dirty, e := database.SchemaVersion(ctx, db); e != nil || dirty || v != database.RequiredSchemaVersion {
+		t.Fatalf("after re-up version=%d dirty=%t err=%v", v, dirty, e)
+	}
 	input := `{"categories":[{"code":"original","name":"原创","sort_order":1},{"code":"empty","name":"空分类"}],"sentences":[{"uuid":"75A45FD4-4F2F-45EB-80CB-6F0A7BCDFAF2","category":"original","content":"今天也要认真写代码。","source":"项目自编示例","author":null}]}`
 	sum, err := importer.Import(ctx, db, strings.NewReader(input), false)
 	if err != nil {

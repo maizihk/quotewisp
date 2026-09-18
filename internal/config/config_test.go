@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func env(m map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
@@ -27,5 +31,87 @@ func TestServiceValidation(t *testing.T) {
 		if _, e := load(ModeService, env(x)); e == nil {
 			t.Fatalf("accepted %#v", x)
 		}
+	}
+}
+
+var webSecret = strings.Repeat("a", 32)
+
+func TestWebRequiredMissing(t *testing.T) {
+	for _, x := range []map[string]string{
+		{"WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"},
+		{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "SITE_CONTACT": "contact@example.com"},
+		{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret},
+	} {
+		if _, e := load(ModeWeb, env(x)); e == nil {
+			t.Fatalf("accepted %#v", x)
+		}
+	}
+}
+func TestWebDefaults(t *testing.T) {
+	c, e := load(ModeWeb, env(map[string]string{
+		"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com",
+	}))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if c.HTTPAddr != ":8081" || !c.CookieSecure || c.SubmissionRatePerHour != 5 || c.SubmissionRatePerDay != 20 ||
+		c.SubmissionPendingLimit != 1000 || c.SubmissionRetention != 2160*time.Hour || c.SnapshotPollInterval != time.Minute ||
+		c.MySQLMaxOpenConns != 10 || c.ShutdownTimeout != 10*time.Second {
+		t.Fatalf("bad defaults: %#v", c)
+	}
+}
+func TestWebValidation(t *testing.T) {
+	base := map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
+	cases := []map[string]string{
+		{"HTTP_ADDR": "nope"},
+		{"HTTP_ADDR": ":0"},
+		{"WEB_SECRET_KEY": "short"},
+		{"SITE_CONTACT": ""},
+		{"SITE_CONTACT": strings.Repeat("x", 257)},
+		{"SITE_CONTACT": "\xff"},
+		{"COOKIE_SECURE": "yes"},
+		{"SUBMISSION_RATE_PER_HOUR": "0"},
+		{"SUBMISSION_RATE_PER_HOUR": ""},
+		{"SUBMISSION_RATE_PER_DAY": "0"},
+		{"SUBMISSION_RATE_PER_DAY": ""},
+		{"SUBMISSION_RATE_PER_DAY": "4"},
+		{"SUBMISSION_PENDING_LIMIT": "0"},
+		{"SUBMISSION_PENDING_LIMIT": ""},
+		{"SUBMISSION_RETENTION": "0s"},
+		{"SUBMISSION_RETENTION": ""},
+		{"SNAPSHOT_POLL_INTERVAL": "0s"},
+		{"SNAPSHOT_POLL_INTERVAL": ""},
+		{"TRUSTED_PROXY_CIDRS": "bad"},
+		{"LOG_LEVEL": "trace"},
+		{"SHUTDOWN_TIMEOUT": ""},
+	}
+	for _, patch := range cases {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range patch {
+			m[k] = v
+		}
+		if _, e := load(ModeWeb, env(m)); e == nil {
+			t.Fatalf("accepted %#v", patch)
+		}
+	}
+}
+func TestWebAdminRequiredMissing(t *testing.T) {
+	if _, e := load(ModeWebAdmin, env(map[string]string{})); e == nil {
+		t.Fatal("accepted missing MYSQL_DSN")
+	}
+}
+func TestWebAdminDefaultsAndPool(t *testing.T) {
+	c, e := load(ModeWebAdmin, env(map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db"}))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if c.MySQLMaxOpenConns != 10 || c.MySQLMaxIdleConns != 5 {
+		t.Fatalf("bad defaults: %#v", c)
+	}
+	if _, e = load(ModeWebAdmin, env(map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "MYSQL_MAX_OPEN_CONNS": "0"})); e == nil {
+		t.Fatal("accepted invalid pool")
 	}
 }

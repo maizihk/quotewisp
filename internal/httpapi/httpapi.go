@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -10,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -18,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"sentence-api/internal/httpmw"
 	"sentence-api/internal/observability"
 	"sentence-api/internal/snapshot"
 )
@@ -64,23 +63,10 @@ func New(o Options) http.Handler {
 	return a.requestID(a.clientIP(a.access(a.recover(a.security(a.cors(http.HandlerFunc(a.route)))))))
 }
 
-type ctxKey uint8
+func RequestID(ctx context.Context) string { return httpmw.RequestIDFrom(ctx) }
+func ClientIP(ctx context.Context) string  { return httpmw.ClientIPFrom(ctx) }
 
-const (
-	requestIDKey ctxKey = iota
-	clientIPKey
-	routeKey
-)
-
-func RequestID(ctx context.Context) string { v, _ := ctx.Value(requestIDKey).(string); return v }
-func ClientIP(ctx context.Context) string  { v, _ := ctx.Value(clientIPKey).(string); return v }
-func routeName(r *http.Request) string {
-	v, _ := r.Context().Value(routeKey).(string)
-	if v == "" {
-		return "unmatched"
-	}
-	return v
-}
+func routeName(r *http.Request) string { return httpmw.RouteName(r) }
 
 func (a *api) classify(path string) string {
 	switch {
@@ -96,156 +82,24 @@ func (a *api) classify(path string) string {
 	return "unmatched"
 }
 
-func (a *api) requestID(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := newUUID()
-		w.Header().Set("X-Request-ID", id)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, id)))
-	})
-}
-func newUUID() string {
-	var b [16]byte
-	if _, e := rand.Read(b[:]); e != nil {
-		panic(e)
-	}
-	b[6] = (b[6] & 15) | 64
-	b[8] = (b[8] & 63) | 128
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
+func (a *api) requestID(next http.Handler) http.Handler { return httpmw.RequestID(next) }
 
 func (a *api) recover(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if v := recover(); v != nil {
-				if v == http.ErrAbortHandler {
-					panic(v)
-				}
-				a.o.Logger.Error("http_panic", "request_id", RequestID(r.Context()), "route", routeName(r))
-				if cw, ok := w.(interface{ Committed() bool }); ok && cw.Committed() {
-					panic(http.ErrAbortHandler)
-				}
-				problem(w, r, 500, "内部错误", "internal-error", "请求处理失败")
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
+	return httpmw.Recover(a.o.Logger, func(w http.ResponseWriter, r *http.Request) {
+		problem(w, r, 500, "内部错误", "internal-error", "请求处理失败")
+	})(next)
 }
 
-type observedWriter struct {
-	http.ResponseWriter
-	status, bytes int
-}
-
-func (w *observedWriter) WriteHeader(n int) {
-	if w.status == 0 {
-		w.status = n
-	}
-	w.ResponseWriter.WriteHeader(n)
-}
-func (w *observedWriter) Write(p []byte) (int, error) {
-	if w.status == 0 {
-		w.status = 200
-	}
-	n, e := w.ResponseWriter.Write(p)
-	w.bytes += n
-	return n, e
-}
-func (w *observedWriter) Committed() bool { return w.status != 0 }
-
-type headWriter struct{ *observedWriter }
-
-func (w headWriter) Write(p []byte) (int, error) {
-	if w.status == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	return len(p), nil
-}
 func (a *api) access(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r = r.WithContext(context.WithValue(r.Context(), routeKey, a.classify(r.URL.Path)))
-		ow := &observedWriter{ResponseWriter: w}
-		start := time.Now()
-		defer func() {
-			status := ow.status
-			if status == 0 {
-				status = 200
-			}
-			route := routeName(r)
-			d := time.Since(start)
-			a.o.Metrics.ObserveHTTP(r.Method, route, status, d)
-			a.o.Logger.Info("http_request", "request_id", RequestID(r.Context()), "method", observability.MetricMethod(r.Method), "route", observability.MetricRoute(route), "status", status, "duration_ms", float64(d.Microseconds())/1000, "response_bytes", ow.bytes, "client_ip", ClientIP(r.Context()))
-		}()
-		if r.Method == "HEAD" {
-			next.ServeHTTP(headWriter{ow}, r)
-		} else {
-			next.ServeHTTP(ow, r)
-		}
-	})
+	return httpmw.Access(a.o.Logger, a.o.Metrics, func(r *http.Request) string {
+		return a.classify(r.URL.Path)
+	}, next)
 }
-func (a *api) security(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		next.ServeHTTP(w, r)
-	})
-}
+
+func (a *api) security(next http.Handler) http.Handler { return httpmw.SecurityHeaders(next) }
 
 func (a *api) clientIP(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		direct := remoteIP(r.RemoteAddr)
-		ip := direct
-		if direct.IsValid() && contains(a.o.TrustedProxies, direct) {
-			if p, ok := forwardedIP(r.Header.Values("X-Forwarded-For"), a.o.TrustedProxies); ok {
-				ip = p
-			}
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey, ip.String())))
-	})
-}
-func remoteIP(s string) netip.Addr {
-	host, _, e := net.SplitHostPort(s)
-	if e != nil {
-		host = s
-	}
-	a, e := netip.ParseAddr(host)
-	if e != nil {
-		return netip.Addr{}
-	}
-	return a.Unmap()
-}
-func contains(ps []netip.Prefix, a netip.Addr) bool {
-	a = a.Unmap()
-	for _, p := range ps {
-		if p.Contains(a) {
-			return true
-		}
-	}
-	return false
-}
-func forwardedIP(lines []string, trusted []netip.Prefix) (netip.Addr, bool) {
-	var all []netip.Addr
-	for _, line := range lines {
-		for _, part := range strings.Split(line, ",") {
-			part = strings.Trim(part, " \t")
-			if part == "" || len(all) >= 32 {
-				return netip.Addr{}, false
-			}
-			a, e := netip.ParseAddr(part)
-			if e != nil || a.Zone() != "" {
-				return netip.Addr{}, false
-			}
-			all = append(all, a.Unmap())
-		}
-	}
-	if len(all) == 0 {
-		return netip.Addr{}, false
-	}
-	for i := len(all) - 1; i >= 0; i-- {
-		if !contains(trusted, all[i]) {
-			return all[i], true
-		}
-	}
-	return all[0], true
+	return httpmw.ClientIP(a.o.TrustedProxies, next)
 }
 
 func (a *api) route(w http.ResponseWriter, r *http.Request) {
