@@ -4,7 +4,7 @@
 状态：草案，待评审  
 修订日期：2026-09-18
 
-本文件定义 `sentence-web` 进程：面向人的前台站点、公开投稿、管理员后台。它与只读 API `sentence-api` 并列部署，共享同一个数据库和 `internal/` 包，但**不修改读 API 的任何行为**。读 API、数据模型、版本协议以 [开发规格](development-spec.md) 为准；本文只写它未覆盖的部分。
+本文件定义 web 进程：面向人的前台站点、公开投稿、管理员后台。它由同一个二进制的 `sentence-api web` 子命令启动，作为独立容器（下文称 `sentence-web`）与只读 API 容器并列部署，共享同一个镜像、数据库和 `internal/` 包，但**不修改读 API 的任何行为**。读 API、数据模型、版本协议以 [开发规格](development-spec.md) 为准；本文只写它未覆盖的部分。
 
 ## 1. 边界与原则
 
@@ -14,15 +14,16 @@
 - 投稿接收、限流、防滥用。
 - 管理员登录、会话、多管理员管理。
 - 投稿审核（通过 / 拒绝 / 修正后通过）。
-- 已发布语句的停用与恢复（用于下架请求）。
+- 句子管理：列表、搜索、详情、编辑、新增、停用与恢复。
+- 分类管理：列表、新建、编辑名称与排序、启用与停用。
 - 句子库导出与署名。
 - 审核元数据的保留期清理。
-- 独立二进制、镜像、迁移 `000002`、测试与文档。
+- `web` 子命令、迁移 `000002`、测试与文档。
 
 不包含：
 
-- 分类的创建、改名、排序、启停（继续由导入或外部程序按版本协议处理，列为后续项）。
-- 修改已发布语句的内容、出处、作者。
+- 物理删除句子或分类（停用即下架，保留记录可追溯；确需删除走数据库）。
+- 修改分类代码（它是 API 参数和快照键）。
 - 用户注册、投稿人账号、投稿状态自助查询。
 - 邮件、站内信等通知。
 - JSON 形式的投稿接口。
@@ -30,8 +31,8 @@
 
 设计原则：
 
-1. **写权限只在 `sentence-web`。** 读 API 继续用只读账号，投稿与审核用具备写权限的账号。两者可以独立重启、回滚、扩缩。
-2. **所有影响读结果的写入走 §6.3 版本协议。** 审核通过、停用、恢复都在事务里先锁版本行，末尾递增一次版本；读 API 通过现有轮询自动加载，不需要通知。
+1. **写权限只在 `sentence-web` 容器。** 读 API 容器继续用只读账号，web 容器用具备写权限的账号。同一镜像，不同启动命令和 DSN；两者可以独立重启、回滚、扩缩。
+2. **所有影响读结果的写入走 §6.3 版本协议。** 审核通过、句子编辑/新增/停用/恢复、分类新建/编辑/启停都在事务里先锁版本行，末尾递增一次版本；读 API 通过现有轮询自动加载，不需要通知。
 3. **投稿本身不递增版本。** 待审记录不进入快照，写它不影响读结果。
 4. **不引入前端框架、JS 构建、Redis、ORM。** 页面用 `html/template` 服务端渲染，`embed` 进二进制；进程内限流；一个新依赖 `golang.org/x/crypto`（argon2id）。
 5. **个人信息最小化。** 联系方式只在后台可见、只保留必要时长；公开的只有投稿人自选昵称。
@@ -294,17 +295,55 @@ CREATE TABLE admin_sessions (
 
 不提供批量操作。审核是逐条判断，批量按钮会诱导不看内容直接过。
 
-### 7.2 已发布语句管理
+### 7.2 句子管理
 
 | 路径 | 方法 | 说明 |
 | --- | --- | --- |
-| `/admin/sentences?uuid=` | GET | 按 UUID 查单条，显示全部字段、状态、关联投稿（若有） |
-| `/admin/sentences/{uuid}/disable` | POST | `status 1 → 3`，锁版本行，版本 `+1` |
-| `/admin/sentences/{uuid}/enable` | POST | `status 3 → 1`，锁版本行，版本 `+1` |
+| `/admin/sentences` | GET | 列表，`id DESC`，每页 50。筛选：`category`（代码）、`status`（`1`/`3`）、`q`（内容关键词）、`uuid`（精确）。显示 UUID、内容摘要、分类、出处、作者、长度、状态、发布时间 |
+| `/admin/sentences/new` | GET | 新增表单 |
+| `/admin/sentences` | POST | 新增；成功 `303` 到详情页 |
+| `/admin/sentences/{uuid}` | GET | 详情：全部字段、状态、关联投稿（若来自投稿，含昵称，不含联系方式）；可编辑 |
+| `/admin/sentences/{uuid}` | POST | 编辑内容、分类、出处、作者 |
+| `/admin/sentences/{uuid}/disable` | POST | `status 1 → 3` |
+| `/admin/sentences/{uuid}/enable` | POST | `status 3 → 1` |
 
-这是处理下架请求的最小工具。不提供编辑内容、删除记录、按内容搜索。
+列表只显示 `status` 为 `1` 或 `3` 的记录；`0` 和 `2` 在当前数据模型中不由本进程产生。
 
-### 7.3 管理员管理
+关键词搜索用 `content LIKE ?` 且对 `%`、`_`、`\` 转义；关键词 1–64 码点。无索引，全表扫描；数据量增长到影响体验时再评估全文索引，不在首版引入。
+
+新增：字段与投稿相同（无昵称、联系方式），但内容上限放宽到数据库容量而非 1000 码点。服务端生成 UUID v4，走第 7.1 节通过事务的第 1、3、4、5、7、8 步，不涉及 `submissions`。
+
+编辑事务：
+
+1. 锁版本行。
+2. `SELECT ... FROM sentences WHERE uuid = ? FOR UPDATE`。
+3. 校验新字段满足开发规格第 6.2 节全部规则；目标分类必须启用；重算 `length`。
+4. 若分类或内容变化，执行第 7.1 节第 4 步的精确重复检查（排除自身）。
+5. 四个业务字段与现值逐字节比较；**完全相同则回滚，不递增版本**，页面提示"无变化"。
+6. `UPDATE sentences SET content, category_id, source, author, length`。UUID、`published_at`、`created_at` 不变。
+7. 版本 `+1`，受影响行数必须为 1。`COMMIT`。
+
+停用 / 恢复事务：锁版本行 → `FOR UPDATE` 读取并检查当前状态是预期的源状态（否则提示已被处理）→ 更新状态 → 版本 `+1` → 提交。停用后该句从读 API 与导出中消失，但 UUID 保留，恢复后不变。
+
+### 7.3 分类管理
+
+| 路径 | 方法 | 说明 |
+| --- | --- | --- |
+| `/admin/categories` | GET | 列表，`sort_order ASC, code ASC`：代码、名称、排序、状态、已发布语句数、停用语句数 |
+| `/admin/categories/new` | GET | 新建表单 |
+| `/admin/categories` | POST | 新建：代码、名称、排序 |
+| `/admin/categories/{code}` | GET | 详情与编辑表单 |
+| `/admin/categories/{code}` | POST | 编辑名称、排序 |
+| `/admin/categories/{code}/disable` | POST | 停用；表单必须携带 `confirm=<当前已发布语句数>`，与服务端事务内重新统计的数一致才执行 |
+| `/admin/categories/{code}/enable` | POST | 启用 |
+
+代码建后不可改。规则与开发规格第 6.1 节一致：代码匹配 `^[a-z0-9][a-z0-9_-]{0,31}$`，名称 1–64 码点、256 字节、不全为空白，排序为有符号 32 位整数。
+
+所有写操作锁版本行、`FOR UPDATE` 读取、变更后版本 `+1`；名称与排序均无变化时回滚不递增版本。新建分类为启用状态，语句数为 0，读 API 的分类列表立即包含它。
+
+停用分类使其下全部语句从读 API 与导出消失、随机接口对该分类返回 `400`；`confirm` 字段强制管理员看到影响条数。二次确认在页面上以"停用将影响 N 条语句"的形式呈现，`N` 由服务端渲染进隐藏字段。停用不改变语句自身的 `status`，恢复分类后语句原样回来。
+
+### 7.4 管理员管理
 
 | 路径 | 方法 | 说明 |
 | --- | --- | --- |
@@ -315,15 +354,16 @@ CREATE TABLE admin_sessions (
 | `/admin/users/{id}/reset-password` | POST | 重置他人密码并删除其会话 |
 | `/admin/password` | GET, POST | 修改自己密码，需输入当前密码；成功后删除自己其他会话 |
 
-### 7.4 CLI
+### 7.5 CLI
 
 ```text
-sentence-web admin create --username <name>
-sentence-web admin disable --username <name>
-sentence-web admin reset-password --username <name>
+sentence-api web                                   # 启动 web 进程
+sentence-api web admin create --username <name>
+sentence-api web admin disable --username <name>
+sentence-api web admin reset-password --username <name>
 ```
 
-密码从标准输入读取（不回显、两次确认），不接受命令行参数，不打印。`create` 用于首个管理员，后续应通过后台创建以留下 `created_by`。
+密码从标准输入读取（不回显、两次确认），不接受命令行参数，不打印。`create` 用于首个管理员，后续应通过后台创建以留下 `created_by`。`admin` 子命令使用 `MYSQL_DSN`，不要求其他 web 配置。
 
 ## 8. 句子库导出与署名
 
@@ -395,7 +435,8 @@ sentence-web admin reset-password --username <name>
 - `http_*`：与读 API 相同的请求指标。
 - `web_submissions_total{result}`：`accepted`、`invalid`、`rate_limited`、`queue_full`、`duplicate`、`honeypot`。
 - `web_reviews_total{action,result}`：`approve`/`reject` × `success`/`conflict`/`duplicate`/`error`。
-- `web_sentence_status_changes_total{action}`：`disable`/`enable`。
+- `web_sentence_changes_total{action,result}`：`create`/`edit`/`disable`/`enable` × `success`/`conflict`/`duplicate`/`unchanged`/`error`。
+- `web_category_changes_total{action,result}`：`create`/`edit`/`disable`/`enable` × 同上。
 - `web_login_attempts_total{result}`：`success`/`failure`/`rate_limited`。
 - `web_pending_submissions`：待审数量（缓存值）。
 - `web_retention_rows_total{action}`：`deleted`/`redacted`。
@@ -409,23 +450,30 @@ sentence-web admin reset-password --username <name>
 
 优雅退出与开发规格第 14.1 节一致：标记退出、停止接收、等待在途请求与后台任务、关闭连接池、共同期限。
 
-## 13. 镜像与发布
+## 13. 镜像与部署
 
-新增 `Dockerfile.web`，与现有 Dockerfile 相同的多阶段、`scratch`、非 root、`CGO_ENABLED=0`、构建参数注入版本要求。模板和静态资源通过 `embed` 进入二进制，运行阶段不复制任何文件目录。镜像 `sentence-web:<tag>`、`sentence-web:git-<sha>`。
+**同一个镜像，两个容器。** 不新增 Dockerfile。模板和静态资源通过 `embed` 进入现有二进制，运行阶段不复制任何文件目录，`scratch` 与非 root 要求不变。
 
-两个镜像使用同一个 Git 标签发布。CI 的 `image` 与 `publish` 任务同时构建两者。
+| 容器 | 启动命令 | `MYSQL_DSN` 账号 | 端口 |
+| --- | --- | --- | --- |
+| `sentence-api` | `/sentence-api` | 只读 | 8080 |
+| `sentence-web` | `/sentence-api web` | 读写 | 8081 |
+
+不在一个容器内运行两个进程：`scratch` 没有 init 进程管理子进程，两者的重启、健康检查、回滚和凭证都应独立。
+
+一个 Git 标签、一次构建、一个 digest，两个容器同时升级到同一版本，不存在读 API 与 web 之间 schema 期望不一致的窗口。CI 的 `image` 与 `publish` 任务不变；`image` 任务的运行时策略检查追加 `web` 子命令无配置时也以退出码 1 结束。
 
 ## 14. 测试
 
 - 单元：字段校验、限流窗口、表单令牌签发与校验、密码哈希与校验、CSRF 检查、Cookie 属性、模板渲染不 panic、错误页格式协商。
 - fuzz：投稿表单解析、UUID 路径参数。
-- 集成（`MYSQL_TEST_DSN`）：通过事务的版本递增与回滚、并发通过同一投稿只成功一次、重复检查、停用/恢复的版本递增、停用最后一个管理员被拒绝、保留期清理、导出可被 `sentence-api import` 原样导入且 `changed=false`。
+- 集成（`MYSQL_TEST_DSN`）：通过事务的版本递增与回滚、并发通过同一投稿只成功一次、重复检查、句子编辑后长度重算且无变化不递增版本、句子与分类的停用/恢复版本递增、分类停用后读 API 快照不含其语句且随机接口返回 `400`、停用最后一个管理员被拒绝、保留期清理、导出可被 `sentence-api import` 原样导入且 `changed=false`。
 - 竞态：`go test -race ./...` 覆盖限流器与缓存。
 - 端到端 smoke：脚本创建管理员、投稿、登录、通过，然后验证读 API 在下一次轮询后返回该语句。
 
 ## 15. 待后续决定
 
-- 分类管理界面。
+- 句子内容的全文索引（关键词搜索变慢时）。
 - JSON 投稿接口（供第三方客户端）。
 - 多实例时的共享限流。
 - 投稿人自助查询状态。
