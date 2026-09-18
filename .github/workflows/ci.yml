@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Go ${{ matrix.go }} checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.26.8', '1.27.1']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go vet ./...
+
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [FuzzQueryParameters, FuzzUUIDPath, FuzzCategories, FuzzProblem]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - run: go test ./internal/httpapi -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=30s
+
+  integration:
+    name: External MariaDB 11.8 integration
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      MYSQL_TEST_DSN: ${{ secrets.MYSQL_TEST_DSN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - name: Require external database for release tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: test -n "$MYSQL_TEST_DSN"
+      - name: Run integration suite
+        run: go test -count=1 ./internal/integration
+
+  integration-pr:
+    name: Integration suite without credentials
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - name: Verify explicit no-credential skip path
+        env:
+          MYSQL_TEST_DSN: ''
+        run: go test -v -count=1 ./internal/integration
+
+  image:
+    name: Build production image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: sentence-api:ci
+          build-args: |
+            VERSION=ci
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=ci
+      - name: Verify scratch runtime policy
+        run: |
+          test "$(docker image inspect sentence-api:ci --format '{{.Config.User}}')" = "65532:65532"
+          set +e
+          docker run --rm --read-only --network none sentence-api:ci
+          status=$?
+          set -e
+          test "$status" -eq 1
+
+  publish:
+    name: Publish protected release tag
+    if: startsWith(github.ref, 'refs/tags/v') && github.ref_protected
+    needs: [quality, fuzz, integration, image]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate release metadata
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          REGISTRY: ${{ vars.IMAGE_REGISTRY }}
+          IMAGE: ${{ vars.IMAGE_NAME }}
+        run: |
+          echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
+          test ${#COMMIT} -eq 40
+          test -n "$REGISTRY"
+          test -n "$IMAGE"
+      - name: Set reproducible release metadata
+        id: metadata
+        run: echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.IMAGE_REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        id: push
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ vars.IMAGE_REGISTRY }}/${{ vars.IMAGE_NAME }}:${{ github.ref_name }}
+            ${{ vars.IMAGE_REGISTRY }}/${{ vars.IMAGE_NAME }}:git-${{ github.sha }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.metadata.outputs.build_time }}
+      - name: Record immutable image digest
+        run: echo "Image digest: ${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

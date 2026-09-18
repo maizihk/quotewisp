@@ -1,0 +1,15 @@
+{
+  "categories": [
+    {"code": "original", "name": "原创", "sort_order": 0},
+    {"code": "empty", "name": "空分类", "sort_order": 10}
+  ],
+  "sentences": [
+    {
+      "uuid": "75a45fd4-4f2f-45eb-80cb-6f0a7bcdfaf2",
+      "category": "original",
+      "content": "今天也要认真写代码。",
+      "source": "项目自编示例",
+      "author": null
+    }
+  ]
+}
