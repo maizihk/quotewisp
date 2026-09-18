@@ -1,0 +1,13 @@
+{{define "error"}}
+{{template "layout" .}}
+{{end}}
+
+{{define "title"}}错误{{end}}
+
+{{define "content"}}
+<section class="error-page">
+<h1>{{.Data.Status}} {{.Data.Title}}</h1>
+{{if .Data.Detail}}<p>{{.Data.Detail}}</p>{{end}}
+<p class="request-id">请求 ID：<code>{{.RequestID}}</code></p>
+</section>
+{{end}}

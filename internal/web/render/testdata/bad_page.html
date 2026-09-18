@@ -1,0 +1,9 @@
+{{define "bad_page"}}
+{{template "layout" .}}
+{{end}}
+
+{{define "title"}}坏页{{end}}
+
+{{define "content"}}
+<p>{{with $.Site}}{{call .Name}}{{end}}</p>
+{{end}}

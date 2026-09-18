@@ -1,0 +1,30 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{template "title" .}} · {{.Site.Name}}</title>
+<link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+<header class="site-header">
+<nav class="site-nav" aria-label="主导航">
+<a href="/">首页</a>
+<a href="/docs">接口文档</a>
+<a href="/submit">投稿</a>
+<a href="/dataset">数据</a>
+</nav>
+</header>
+<main class="site-main">
+{{template "content" .}}
+</main>
+<footer class="site-footer">
+<p>初始句子库来源：<a href="https://github.com/hitokoto-osc/sentences-bundle">hitokoto-osc/sentences-bundle</a>，许可 <a href="/dataset/LICENSE.txt">AGPL v3</a>。</p>
+<p><a href="/dataset/sentences.json">本站句子库（含用户投稿）在相同条件下开放下载</a>。</p>
+<p>程序为独立实现{{if .Site.RepoURL}}，<a href="{{.Site.RepoURL}}">源代码</a>{{end}}。</p>
+<p>下架请求请联系：{{.Site.Contact}}</p>
+</footer>
+</body>
+</html>
+{{end}}

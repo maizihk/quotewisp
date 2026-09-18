@@ -1,0 +1,210 @@
+:root {
+	color-scheme: light;
+	--text: #1a1a1a;
+	--muted: #555;
+	--border: #d8d8d8;
+	--surface: #f7f7f7;
+	--accent: #0b57d0;
+	--accent-hover: #0842a0;
+	--danger: #b3261e;
+	--flash-bg: #e8f0fe;
+	--flash-border: #aecbfa;
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+	line-height: 1.5;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	color: var(--text);
+	background: #fff;
+}
+
+a {
+	color: var(--accent);
+}
+
+a:hover {
+	color: var(--accent-hover);
+}
+
+.site-header {
+	border-bottom: 1px solid var(--border);
+	background: var(--surface);
+}
+
+.site-nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1rem;
+	max-width: 56rem;
+	margin: 0 auto;
+	padding: 0.75rem 1rem;
+}
+
+.site-nav a {
+	text-decoration: none;
+	font-weight: 500;
+}
+
+.site-main {
+	max-width: 56rem;
+	margin: 0 auto;
+	padding: 1.5rem 1rem 2.5rem;
+}
+
+.site-footer {
+	border-top: 1px solid var(--border);
+	background: var(--surface);
+	color: var(--muted);
+	font-size: 0.875rem;
+}
+
+.site-footer p {
+	max-width: 56rem;
+	margin: 0 auto;
+	padding: 0.35rem 1rem;
+}
+
+.site-footer p:first-child {
+	padding-top: 1rem;
+}
+
+.site-footer p:last-child {
+	padding-bottom: 1rem;
+}
+
+h1, h2, h3 {
+	line-height: 1.25;
+}
+
+form {
+	display: grid;
+	gap: 1rem;
+	max-width: 36rem;
+}
+
+label {
+	display: grid;
+	gap: 0.35rem;
+	font-weight: 500;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+input[type="url"],
+textarea,
+select {
+	width: 100%;
+	padding: 0.5rem 0.65rem;
+	border: 1px solid var(--border);
+	border-radius: 0.35rem;
+	font: inherit;
+	background: #fff;
+}
+
+textarea {
+	min-height: 6rem;
+	resize: vertical;
+}
+
+button,
+.button {
+	display: inline-block;
+	padding: 0.5rem 1rem;
+	border: 1px solid var(--accent);
+	border-radius: 0.35rem;
+	background: var(--accent);
+	color: #fff;
+	font: inherit;
+	font-weight: 500;
+	cursor: pointer;
+	text-decoration: none;
+}
+
+button:hover,
+.button:hover {
+	background: var(--accent-hover);
+	border-color: var(--accent-hover);
+	color: #fff;
+}
+
+.field-error {
+	margin: 0.25rem 0 0;
+	color: var(--danger);
+	font-size: 0.875rem;
+	font-weight: 400;
+}
+
+.flash {
+	padding: 0.75rem 1rem;
+	border: 1px solid var(--flash-border);
+	border-radius: 0.35rem;
+	background: var(--flash-bg);
+}
+
+.table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.9375rem;
+}
+
+.table th,
+.table td {
+	padding: 0.5rem 0.65rem;
+	border-bottom: 1px solid var(--border);
+	text-align: left;
+	vertical-align: top;
+}
+
+.table th {
+	background: var(--surface);
+	font-weight: 600;
+}
+
+code,
+pre {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+	font-size: 0.9em;
+}
+
+pre {
+	overflow-x: auto;
+	padding: 0.75rem 1rem;
+	border: 1px solid var(--border);
+	border-radius: 0.35rem;
+	background: var(--surface);
+}
+
+.error-page .request-id {
+	color: var(--muted);
+	font-size: 0.875rem;
+}
+
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+@media (max-width: 640px) {
+	.site-main {
+		padding-top: 1rem;
+	}
+
+	.table {
+		display: block;
+		overflow-x: auto;
+	}
+}

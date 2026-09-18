@@ -1,0 +1,12 @@
+{{define "funcs_page"}}
+{{template "layout" .}}
+{{end}}
+
+{{define "title"}}函数页{{end}}
+
+{{define "content"}}
+<p>{{formatTime .Data.When}}</p>
+<p>{{truncate 2 "你好世界"}}</p>
+<p>{{submissionStatus 0}} {{submissionStatus 1}} {{submissionStatus 2}}</p>
+<p>{{sentenceStatus 1}} {{sentenceStatus 3}}</p>
+{{end}}
