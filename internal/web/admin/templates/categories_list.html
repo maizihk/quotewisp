@@ -1,0 +1,26 @@
+{{define "categories_list"}}{{template "layout" .}}{{end}}
+{{define "title"}}分类管理{{end}}
+{{define "content"}}
+{{template "admin_bar" .}}
+<h1>分类管理</h1>
+{{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
+<p><a href="/admin/categories/new">新建分类</a></p>
+<table>
+<thead><tr><th>代码</th><th>名称</th><th>排序</th><th>状态</th><th>已发布</th><th>已停用</th><th></th></tr></thead>
+<tbody>
+{{range .Data.Items}}
+<tr>
+<td>{{.Code}}</td>
+<td>{{.Name}}</td>
+<td>{{.SortOrder}}</td>
+<td>{{if .Enabled}}启用{{else}}停用{{end}}</td>
+<td>{{.PublishedCount}}</td>
+<td>{{.DisabledCount}}</td>
+<td><a href="/admin/categories/{{.Code}}">详情</a></td>
+</tr>
+{{else}}
+<tr><td colspan="7">暂无分类</td></tr>
+{{end}}
+</tbody>
+</table>
+{{end}}

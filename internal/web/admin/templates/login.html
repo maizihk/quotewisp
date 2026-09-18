@@ -1,0 +1,11 @@
+{{define "login"}}{{template "layout" .}}{{end}}
+{{define "title"}}管理员登录{{end}}
+{{define "content"}}
+<h1>管理员登录</h1>
+{{if .Data.Error}}<p class="flash error">{{.Data.Error}}</p>{{end}}
+<form method="post" action="/admin/login">
+<label>用户名 <input name="username" required autocomplete="username"></label>
+<label>密码 <input name="password" type="password" required autocomplete="current-password"></label>
+<button type="submit">登录</button>
+</form>
+{{end}}

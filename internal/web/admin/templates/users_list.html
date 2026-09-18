@@ -1,0 +1,50 @@
+{{define "users_list"}}{{template "layout" .}}{{end}}
+{{define "title"}}管理员{{end}}
+{{define "content"}}
+{{template "admin_bar" .}}
+<h1>管理员</h1>
+{{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
+<h2>新建管理员</h2>
+<form method="post" action="/admin/users">
+<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
+<label>用户名 <input name="username" value="{{.Data.Username}}" required pattern="[a-z0-9][a-z0-9_-]{2,31}"></label>
+<label>密码 <input name="password" type="password" required autocomplete="new-password"></label>
+<label>确认密码 <input name="password_confirm" type="password" required autocomplete="new-password"></label>
+<button type="submit">创建</button>
+</form>
+<h2>管理员列表</h2>
+<table>
+<thead><tr><th>用户名</th><th>状态</th><th>创建时间</th><th>最近登录</th><th>操作</th></tr></thead>
+<tbody>
+{{range .Data.Items}}
+<tr>
+<td>{{.Username}}</td>
+<td>{{if .Enabled}}启用{{else}}停用{{end}}</td>
+<td>{{formatTime .CreatedAt}}</td>
+<td>{{if .LastLoginAt}}{{.LastLoginAt}}{{else}}—{{end}}</td>
+<td>
+{{if .Enabled}}
+<form method="post" action="/admin/users/{{.ID}}/disable" style="display:inline">
+<input type="hidden" name="csrf_token" value="{{$.Data.CSRF}}">
+<button type="submit">停用</button>
+</form>
+{{else}}
+<form method="post" action="/admin/users/{{.ID}}/enable" style="display:inline">
+<input type="hidden" name="csrf_token" value="{{$.Data.CSRF}}">
+<button type="submit">启用</button>
+</form>
+{{end}}
+<form method="post" action="/admin/users/{{.ID}}/reset-password" style="display:inline">
+<input type="hidden" name="csrf_token" value="{{$.Data.CSRF}}">
+<input name="password" type="password" placeholder="新密码" required autocomplete="new-password">
+<input name="password_confirm" type="password" placeholder="确认" required autocomplete="new-password">
+<button type="submit">重置密码</button>
+</form>
+</td>
+</tr>
+{{else}}
+<tr><td colspan="5">暂无管理员</td></tr>
+{{end}}
+</tbody>
+</table>
+{{end}}

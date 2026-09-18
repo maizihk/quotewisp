@@ -1,0 +1,33 @@
+{{define "category_detail"}}{{template "layout" .}}{{end}}
+{{define "title"}}分类 {{.Data.Item.Code}}{{end}}
+{{define "content"}}
+{{template "admin_bar" .}}
+<h1>分类 {{.Data.Item.Code}}</h1>
+{{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
+<dl>
+<dt>代码</dt><dd>{{.Data.Item.Code}}</dd>
+<dt>状态</dt><dd>{{if .Data.Item.Enabled}}启用{{else}}停用{{end}}</dd>
+<dt>已发布语句数</dt><dd>{{.Data.Item.PublishedCount}}</dd>
+<dt>已停用语句数</dt><dd>{{.Data.Item.DisabledCount}}</dd>
+</dl>
+<form method="post" action="/admin/categories/{{.Data.Item.Code}}">
+<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
+<label>名称 <input name="name" value="{{.Data.Form.Name}}" required></label>
+<label>排序 <input name="sort_order" type="number" value="{{.Data.Form.SortOrder}}" required></label>
+<button type="submit">保存</button>
+</form>
+{{if .Data.Item.Enabled}}
+<form method="post" action="/admin/categories/{{.Data.Item.Code}}/disable">
+<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
+<input type="hidden" name="confirm" value="{{.Data.Item.PublishedCount}}">
+<p>停用将影响 {{.Data.Item.PublishedCount}} 条已发布语句。</p>
+<button type="submit">停用分类</button>
+</form>
+{{else}}
+<form method="post" action="/admin/categories/{{.Data.Item.Code}}/enable">
+<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
+<button type="submit">启用分类</button>
+</form>
+{{end}}
+<p><a href="/admin/categories">返回列表</a></p>
+{{end}}

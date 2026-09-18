@@ -1,0 +1,15 @@
+{{define "admin_bar"}}
+<nav class="admin-bar" aria-label="后台导航">
+<span>当前用户：{{.Data.Username}}</span>
+<a href="/admin/">待审</a>
+<a href="/admin/submissions?status=approved">已处理</a>
+<a href="/admin/sentences">句子</a>
+<a href="/admin/categories">分类</a>
+<a href="/admin/users">管理员</a>
+<a href="/admin/password">修改密码</a>
+<form method="post" action="/admin/logout" style="display:inline">
+<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
+<button type="submit">退出</button>
+</form>
+</nav>
+{{end}}

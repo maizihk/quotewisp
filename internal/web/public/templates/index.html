@@ -1,0 +1,41 @@
+{{define "index"}}{{template "layout" .}}{{end}}
+{{define "title"}}首页{{end}}
+{{define "content"}}
+<h1>句子 API</h1>
+<p>本站提供随机语句读取接口与公开句子库下载。同域浏览器可直接调用 <code>/api/v1/sentences/random</code> 获取一条随机语句。</p>
+
+<section>
+<h2>随机一句</h2>
+<blockquote id="random">
+<p id="random-content">加载中…</p>
+<footer id="random-meta"></footer>
+</blockquote>
+<button type="button" id="random-btn">换一句</button>
+<script src="/assets/random.js"></script>
+<noscript>
+<p>未启用 JavaScript 时，可直接请求 <code>GET /api/v1/sentences/random</code> 获取随机语句。详见<a href="/docs">接口文档</a>。</p>
+</noscript>
+</section>
+
+<section>
+<h2>最近通过的投稿</h2>
+{{if .Data.Recent}}
+<ul class="recent-list">
+{{range .Data.Recent}}
+<li>
+<blockquote>{{.Content}}</blockquote>
+<p class="meta">{{.CategoryName}} · {{.Nickname}}</p>
+</li>
+{{end}}
+</ul>
+{{else}}
+<p>暂无最近通过的投稿。</p>
+{{end}}
+</section>
+
+<nav class="page-links">
+<a href="/docs">接口文档</a>
+<a href="/submit">投稿</a>
+<a href="/dataset">数据说明与下载</a>
+</nav>
+{{end}}

@@ -1,0 +1,61 @@
+{{define "submit"}}{{template "layout" .}}{{end}}
+{{define "title"}}投稿{{end}}
+{{define "content"}}
+<h1>投稿</h1>
+{{if .Data.FormError}}<p class="flash error">{{.Data.FormError}}</p>{{end}}
+
+<form method="post" action="/submit">
+<input type="hidden" name="form_token" value="{{.Data.FormToken}}">
+<div class="visually-hidden" tabindex="-1">
+<label>网站 <input type="text" name="website" autocomplete="off" tabindex="-1"></label>
+</div>
+
+<label>内容（必填，1–1000 字）
+<textarea name="content" required rows="6">{{.Data.Values.Content}}</textarea>
+{{if index .Data.FieldErrors "content"}}<span class="field-error">{{index .Data.FieldErrors "content"}}</span>{{end}}
+</label>
+
+<label>分类（必填）
+<select name="category" required>
+<option value="">请选择</option>
+{{range .Data.Categories}}
+<option value="{{.Code}}" {{if eq $.Data.Values.Category .Code}}selected{{end}}>{{.Name}} ({{.Code}})</option>
+{{end}}
+</select>
+{{if index .Data.FieldErrors "category"}}<span class="field-error">{{index .Data.FieldErrors "category"}}</span>{{end}}
+</label>
+
+<label>出处
+<input name="source" value="{{.Data.Values.Source}}">
+{{if index .Data.FieldErrors "source"}}<span class="field-error">{{index .Data.FieldErrors "source"}}</span>{{end}}
+</label>
+
+<label>作者
+<input name="author" value="{{.Data.Values.Author}}">
+{{if index .Data.FieldErrors "author"}}<span class="field-error">{{index .Data.FieldErrors "author"}}</span>{{end}}
+</label>
+
+<label>昵称（公开显示，可留空则显示「匿名」）
+<input name="nickname" value="{{.Data.Values.Nickname}}">
+{{if index .Data.FieldErrors "nickname"}}<span class="field-error">{{index .Data.FieldErrors "nickname"}}</span>{{end}}
+</label>
+
+<label>联系方式（必填，仅审核使用，不公开）
+<input name="contact" required value="{{.Data.Values.Contact}}">
+{{if index .Data.FieldErrors "contact"}}<span class="field-error">{{index .Data.FieldErrors "contact"}}</span>{{end}}
+</label>
+
+<fieldset class="terms">
+<legend>投稿条款</legend>
+<ul>
+<li>投稿内容将在审核通过后公开，并作为句子库的一部分以与本站句子库相同的条件开放下载。</li>
+<li>昵称随内容公开；联系方式仅用于审核沟通，不公开，审核结束 90 天后删除。</li>
+<li>投稿人确认拥有提交内容的权利，或内容属于可公开引用的范围。</li>
+</ul>
+<label><input type="checkbox" name="agree" {{if .Data.Values.Agree}}checked{{end}} required> 我已阅读并同意上述条款</label>
+{{if index .Data.FieldErrors "agree"}}<span class="field-error">{{index .Data.FieldErrors "agree"}}</span>{{end}}
+</fieldset>
+
+<button type="submit">提交投稿</button>
+</form>
+{{end}}

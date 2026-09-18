@@ -1,0 +1,20 @@
+{{define "dataset"}}{{template "layout" .}}{{end}}
+{{define "title"}}数据说明{{end}}
+{{define "content"}}
+<h1>句子库数据说明</h1>
+
+<h2>来源与许可</h2>
+<p>初始句子库来源：<a href="https://github.com/hitokoto-osc/sentences-bundle">hitokoto-osc/sentences-bundle</a>，许可 <a href="/dataset/LICENSE.txt">GNU AGPL v3</a>。</p>
+<p>本站句子库（含后续审核通过的用户投稿）在相同条件下开放下载。程序为独立实现，许可另行说明{{if .Site.RepoURL}}（<a href="{{.Site.RepoURL}}">源代码</a>）{{end}}。</p>
+<p>如需请求下架，请联系：{{.Site.Contact}}</p>
+
+<h2>当前版本</h2>
+<p>数据集版本：<strong>{{.Data.Version}}</strong></p>
+<p>已发布语句数：<strong>{{.Data.SentenceCount}}</strong></p>
+
+<h2>下载</h2>
+<ul>
+<li><a href="/dataset/sentences.json">sentences.json</a> — 完整导出，格式与导入命令兼容</li>
+<li><a href="/dataset/LICENSE.txt">LICENSE.txt</a> — GNU AGPL v3 全文</li>
+</ul>
+{{end}}

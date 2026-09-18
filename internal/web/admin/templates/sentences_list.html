@@ -1,0 +1,48 @@
+{{define "sentences_list"}}{{template "layout" .}}{{end}}
+{{define "title"}}句子管理{{end}}
+{{define "content"}}
+{{template "admin_bar" .}}
+<h1>句子管理</h1>
+{{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
+<p><a href="/admin/sentences/new">新增句子</a></p>
+<form method="get" action="/admin/sentences">
+<label>分类 <input name="category" value="{{.Data.Category}}"></label>
+<label>状态
+<select name="status">
+<option value="">全部</option>
+<option value="1"{{if eq .Data.Status "1"}} selected{{end}}>已发布</option>
+<option value="3"{{if eq .Data.Status "3"}} selected{{end}}>已停用</option>
+</select>
+</label>
+<label>关键词 <input name="q" value="{{.Data.Query}}"></label>
+<label>UUID <input name="uuid" value="{{.Data.UUID}}"></label>
+<button type="submit">筛选</button>
+</form>
+<p>共 {{.Data.Total}} 条</p>
+<table>
+<thead><tr><th>UUID</th><th>内容</th><th>分类</th><th>出处</th><th>作者</th><th>长度</th><th>状态</th><th>发布时间</th></tr></thead>
+<tbody>
+{{range .Data.Items}}
+<tr>
+<td><a href="/admin/sentences/{{.UUID}}">{{truncate 8 .UUID}}</a></td>
+<td>{{truncate 60 .Content}}</td>
+<td>{{.CategoryName}}</td>
+<td>{{.Source}}</td>
+<td>{{.Author}}</td>
+<td>{{.Length}}</td>
+<td>{{sentenceStatus .Status}}</td>
+<td>{{if .PublishedAt}}{{.PublishedAt}}{{end}}</td>
+</tr>
+{{else}}
+<tr><td colspan="8">暂无句子</td></tr>
+{{end}}
+</tbody>
+</table>
+{{if gt .Data.Pages 1}}
+<nav class="pagination">
+{{if .Data.PrevPage}}<a href="/admin/sentences?category={{.Data.Category}}&amp;status={{.Data.Status}}&amp;q={{.Data.Query}}&amp;uuid={{.Data.UUID}}&amp;page={{.Data.PrevPage}}">上一页</a>{{end}}
+<span>第 {{.Data.Page}} / {{.Data.Pages}} 页</span>
+{{if .Data.NextPage}}<a href="/admin/sentences?category={{.Data.Category}}&amp;status={{.Data.Status}}&amp;q={{.Data.Query}}&amp;uuid={{.Data.UUID}}&amp;page={{.Data.NextPage}}">下一页</a>{{end}}
+</nav>
+{{end}}
+{{end}}

@@ -1,0 +1,22 @@
+{{define "sentence_form"}}{{template "layout" .}}{{end}}
+{{define "title"}}新增句子{{end}}
+{{define "content"}}
+{{template "admin_bar" .}}
+<h1>新增句子</h1>
+{{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
+<form method="post" action="/admin/sentences">
+<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
+<label>内容 <textarea name="content" rows="4" required>{{.Data.Form.Content}}</textarea></label>
+<label>分类
+<select name="category" required>
+{{range .Data.Categories}}
+<option value="{{.Code}}"{{if eq .Code $.Data.Form.Category}} selected{{end}}>{{.Name}} ({{.Code}})</option>
+{{end}}
+</select>
+</label>
+<label>出处 <input name="source" value="{{.Data.Form.Source}}"></label>
+<label>作者 <input name="author" value="{{.Data.Form.Author}}"></label>
+<button type="submit">创建</button>
+</form>
+<p><a href="/admin/sentences">返回列表</a></p>
+{{end}}

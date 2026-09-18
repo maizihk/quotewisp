@@ -1,0 +1,33 @@
+{{define "pending"}}{{template "layout" .}}{{end}}
+{{define "title"}}待审投稿{{end}}
+{{define "content"}}
+{{template "admin_bar" .}}
+<h1>待审投稿</h1>
+{{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
+<p>共 {{.Data.Total}} 条</p>
+<table>
+<thead><tr><th>内容</th><th>分类</th><th>出处</th><th>作者</th><th>昵称</th><th>提交时间</th><th></th></tr></thead>
+<tbody>
+{{range .Data.Items}}
+<tr>
+<td>{{truncate 80 .Content}}{{if .DuplicatePending}} <span class="badge">重复</span>{{end}}</td>
+<td>{{.CategoryName}}</td>
+<td>{{.Source}}</td>
+<td>{{.Author}}</td>
+<td>{{if .Nickname}}{{.Nickname}}{{else}}匿名{{end}}</td>
+<td>{{formatTime .CreatedAt}}</td>
+<td><a href="/admin/submissions/{{.ID}}">详情</a></td>
+</tr>
+{{else}}
+<tr><td colspan="7">暂无待审投稿</td></tr>
+{{end}}
+</tbody>
+</table>
+{{if gt .Data.Pages 1}}
+<nav class="pagination">
+{{if .Data.PrevPage}}<a href="/admin/?page={{.Data.PrevPage}}">上一页</a>{{end}}
+<span>第 {{.Data.Page}} / {{.Data.Pages}} 页</span>
+{{if .Data.NextPage}}<a href="/admin/?page={{.Data.NextPage}}">下一页</a>{{end}}
+</nav>
+{{end}}
+{{end}}

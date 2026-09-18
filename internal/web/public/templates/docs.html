@@ -1,0 +1,97 @@
+{{define "docs"}}{{template "layout" .}}{{end}}
+{{define "title"}}接口文档{{end}}
+{{define "content"}}
+<h1>读 API 接口文档</h1>
+<p>业务接口统一前缀为 <code>/api/v1</code>。成功响应为 <code>application/json; charset=utf-8</code>，所有文本使用 UTF-8。当前数据集版本（<code>meta.dataset_version</code> 为十进制字符串）：<strong>{{.Data.Version}}</strong>。</p>
+
+<h2>通用约定</h2>
+<ul>
+<li>所有服务可控响应包含 <code>X-Request-ID</code>。</li>
+<li>公开读取路由允许 <code>GET</code>、<code>HEAD</code>、<code>OPTIONS</code>。<code>HEAD</code> 与 <code>GET</code> 执行相同校验，仅不返回响应体。</li>
+<li>普通 <code>OPTIONS</code> 返回 <code>204</code> 与 <code>Allow</code> 头。</li>
+<li>业务接口返回 <code>Cache-Control: no-store</code>。</li>
+<li>跨域（CORS）需在部署侧配置允许的 origin；默认不开放跨域。</li>
+</ul>
+
+<h2>GET /api/v1/sentences/random</h2>
+<p>随机返回一条已发布语句。</p>
+<table>
+<thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>限制</th></tr></thead>
+<tbody>
+<tr><td><code>categories</code></td><td>逗号分隔字符串</td><td>全部启用分类</td><td>去重后最多 20 个；非法或未知分类返回 400</td></tr>
+<tr><td><code>min_length</code></td><td>十进制整数</td><td><code>0</code></td><td>0–1000</td></tr>
+<tr><td><code>max_length</code></td><td>十进制整数</td><td><code>30</code></td><td>0–1000，必须 ≥ <code>min_length</code></td></tr>
+</tbody>
+</table>
+<p>原始查询字符串最多 4096 字节。无匹配数据时返回 404。</p>
+<pre>{
+  "data": {
+    "uuid": "75a45fd4-4f2f-45eb-80cb-6f0a7bcdfaf2",
+    "content": "今天也要认真写代码。",
+    "category": "f",
+    "source": "项目自编示例",
+    "author": "",
+    "length": 10
+  },
+  "meta": {"dataset_version": "{{.Data.Version}}"}
+}</pre>
+
+<h2>GET /api/v1/sentences/{uuid}</h2>
+<p>按 UUID 查询单条已发布语句。格式错误返回 400；不存在或未发布返回 404。成功响应结构与随机接口相同。</p>
+
+<h2>GET /api/v1/categories</h2>
+<p>返回所有启用分类（含零语句分类），按 <code>sort_order ASC, code ASC</code> 排列。</p>
+<pre>{
+  "data": [
+    {"code": "f", "name": "原创", "count": 120}
+  ],
+  "meta": {"dataset_version": "{{.Data.Version}}"}
+}</pre>
+
+<h2>当前启用分类</h2>
+<table>
+<thead><tr><th>代码</th><th>名称</th><th>语句数</th></tr></thead>
+<tbody>
+{{range .Data.Categories}}
+<tr><td><code>{{.Code}}</code></td><td>{{.Name}}</td><td>{{.Count}}</td></tr>
+{{else}}
+<tr><td colspan="3">暂无启用分类</td></tr>
+{{end}}
+</tbody>
+</table>
+
+<h2>错误格式</h2>
+<p>服务可控错误使用 <code>application/problem+json</code>：</p>
+<pre>{
+  "type": "about:blank",
+  "title": "参数无效",
+  "status": 400,
+  "detail": "max_length 必须大于等于 min_length",
+  "request_id": "4eb245ba-2340-420a-8e8b-6f6034c1dcde",
+  "code": "invalid-parameter"
+}</pre>
+
+<table>
+<thead><tr><th>HTTP 状态</th><th>code</th><th>场景</th></tr></thead>
+<tbody>
+<tr><td>400</td><td><code>invalid-parameter</code></td><td>参数、UUID、查询编码或不支持的请求实体</td></tr>
+<tr><td>401</td><td><code>unauthorized</code></td><td>手动刷新凭证无效</td></tr>
+<tr><td>403</td><td><code>cors-denied</code></td><td>明确被拒绝的 CORS 预检</td></tr>
+<tr><td>404</td><td><code>not-found</code></td><td>未知路径、缺失语句或没有匹配数据</td></tr>
+<tr><td>405</td><td><code>method-not-allowed</code></td><td>已知路径上方法不受支持</td></tr>
+<tr><td>409</td><td><code>reload-in-progress</code></td><td>已有快照构建任务</td></tr>
+<tr><td>500</td><td><code>internal-error</code></td><td>可恢复内部错误</td></tr>
+<tr><td>503</td><td><code>not-ready</code></td><td>无有效快照或服务正在退出</td></tr>
+</tbody>
+</table>
+
+<h2>示例</h2>
+{{if .Data.APIBase}}
+<pre>curl -sS '{{.Data.APIBase}}/api/v1/sentences/random'</pre>
+<pre>fetch('{{.Data.APIBase}}/api/v1/sentences/random').then(r =&gt; r.json()).then(console.log)</pre>
+{{else}}
+<pre>curl -sS '/api/v1/sentences/random'</pre>
+<pre>fetch('/api/v1/sentences/random').then(r =&gt; r.json()).then(console.log)</pre>
+{{end}}
+<p>示例基址：{{.Data.APIBaseDisplay}}</p>
+{{end}}
