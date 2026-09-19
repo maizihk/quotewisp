@@ -2,7 +2,7 @@
 
 审计日期：2026-09-20（Asia/Shanghai）
 
-本文是发布审核记录。`1.0.0-rc.1` 已部署，API/Web、性能、故障、公开浏览器、后台安全、管理员账户闭环及站点设置隔离验收均有通过证据；部署详情见 [`docs/deployment-rc1-20260920.md`](deployment-rc1-20260920.md)，API 未变。稳定版本发布和 registry 推送尚未执行；此前 dirty 部署记录保留在 [`docs/deployment-20260920.md`](deployment-20260920.md)。
+本文是发布审核记录。`1.0.0-rc.1` 已部署，API/Web、性能、故障、公开浏览器、后台安全、管理员账户闭环及站点设置隔离验收均有通过证据；部署详情见 [`docs/deployment-rc1-20260920.md`](deployment-rc1-20260920.md)，API/Web 均已切换至 rc1。稳定版本发布和 registry 推送尚未执行；此前 dirty 部署记录保留在 [`docs/deployment-20260920.md`](deployment-20260920.md)。
 
 ## 已核实
 
@@ -13,7 +13,7 @@
 - [x] `docs/performance.md` 记录的 2026-09-20 正式隔离复测通过既定 API 性能阈值；`docs/fault-acceptance.md` 记录数据库中断、旧快照服务、恢复刷新和优雅退出均通过。两份证据只覆盖隔离实例，不能宣称全站上线通过。
 - [x] 可复用脚本已确认：`scripts/smoke.sh`、`scripts/smoke-web.sh`、`scripts/e2e-web.sh`、`scripts/test-mariadb.sh`；运行时凭证应通过环境变量注入，禁止写入报告或镜像。
 
-## 当前阻塞与待做
+## 冻结前审计记录（历史状态）
 
 - [ ] 工作树待冻结：当前仍有大量已修改和未跟踪路径，包含业务代码、迁移、CI、Dockerfile、文档及 Web 交付文件。负责人需逐项审阅并形成单一发布提交；当前 dirty 状态不能打正式标签。
 - [ ] `.github/RELEASE.md`、`.github/workflows/ci.yml`、`Dockerfile`、`Makefile` 均有未提交修改；这些发布控制文件必须纳入同一提交并重新跑门禁。
@@ -39,4 +39,4 @@
 
 ## 审计结论
 
-当前状态为“发布准备未完成”。性能和故障隔离验收已有通过记录，发布控制面和镜像运行策略也已读审；待冻结工作树、未核实的保护环境/registry 配置以及尚未产生的正式发布 digest，均阻止正式版本冻结和上线结论。完成上述待做项并获得受保护标签流水线的完整成功记录后，才能把版本标记为可发布。
+当前状态为“rc1 本地冻结、部署与 HTTPS/浏览器复验完成”。稳定版本发布、外部 registry 门禁与受保护 release 环境仍待配置和执行；本地冻结与部署证据已记录，不能将外部发布条件表述为本地冻结未完成。
