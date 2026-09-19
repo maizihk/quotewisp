@@ -36,7 +36,6 @@ type Deps struct {
 	Logger       *slog.Logger
 	Metrics      Metrics
 	PendingLimit int
-	APIBaseURL   string
 }
 
 type handler struct {
@@ -48,7 +47,6 @@ type handler struct {
 	logger       *slog.Logger
 	metrics      Metrics
 	pendingLimit int
-	apiBaseURL   string
 	indexPages   *template.Template
 	docsPages    *template.Template
 	submitPages  *template.Template
@@ -100,7 +98,6 @@ func New(d Deps) (http.Handler, error) {
 		logger:       d.Logger,
 		metrics:      d.Metrics,
 		pendingLimit: d.PendingLimit,
-		apiBaseURL:   d.APIBaseURL,
 		indexPages:   indexPages,
 		docsPages:    docsPages,
 		submitPages:  submitPages,

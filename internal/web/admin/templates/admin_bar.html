@@ -1,15 +1,17 @@
 {{define "admin_bar"}}
-<nav class="admin-bar" aria-label="后台导航">
-<span>当前用户：{{.Data.Username}}</span>
-<a href="/admin/">待审</a>
-<a href="/admin/submissions?status=approved">已处理</a>
-<a href="/admin/sentences">句子</a>
-<a href="/admin/categories">分类</a>
-<a href="/admin/users">管理员</a>
-<a href="/admin/password">修改密码</a>
-<form method="post" action="/admin/logout" style="display:inline">
-<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
-<button type="submit">退出</button>
-</form>
+<aside class="admin-sidebar">
+<a class="admin-brand" href="/admin/"><span>{{.Site.Name}}</span>{{if .Site.EnglishName}}<small>{{.Site.EnglishName}}</small>{{end}}</a>
+<nav class="admin-nav" aria-label="后台导航">
+<p class="admin-nav-label">内容</p>
+<a href="/admin/"{{if navActive . "/admin/"}} class="is-active"{{end}}>概况</a>
+<a href="/admin/submissions"{{if navActive . "/admin/submissions"}} class="is-active"{{end}}>待审</a>
+<a href="/admin/submissions?status=approved"{{if navActive . "/admin/submissions?status=approved"}} class="is-active"{{end}}>已处理</a>
+<a href="/admin/sentences"{{if navActive . "/admin/sentences"}} class="is-active"{{end}}>句子</a>
+<a href="/admin/categories"{{if navActive . "/admin/categories"}} class="is-active"{{end}}>分类</a>
+<p class="admin-nav-label">系统</p>
+<a href="/admin/users"{{if navActive . "/admin/users"}} class="is-active"{{end}}>管理员</a>
+<a href="/admin/settings"{{if navActive . "/admin/settings"}} class="is-active"{{end}}>站点设置</a>
 </nav>
+<a class="admin-site-link" href="/">查看公开站点</a>
+</aside>
 {{end}}

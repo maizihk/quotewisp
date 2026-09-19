@@ -56,6 +56,10 @@ func (h *handler) getPending(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) getSubmissionsList(w http.ResponseWriter, r *http.Request) {
 	statusParam := r.URL.Query().Get("status")
+	if statusParam == "" || statusParam == "pending" {
+		h.getPending(w, r)
+		return
+	}
 	var status uint8
 	var label string
 	switch statusParam {
@@ -157,7 +161,7 @@ func (h *handler) postApprove(w http.ResponseWriter, r *http.Request) {
 	h.metrics.Review("approve", "success")
 	h.logger.Info("admin approve success", "admin_id", sess.AdminID, "submission_id", id)
 	h.onChange()
-	redirect(w, r, "/admin/")
+	redirect(w, r, "/admin/submissions")
 }
 
 func (h *handler) handleApproveError(w http.ResponseWriter, r *http.Request, id uint64, sub store.Submission, err error) {

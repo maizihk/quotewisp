@@ -1,0 +1,24 @@
+{{define "settings"}}{{template "admin_layout" .}}{{end}}
+{{define "title"}}站点设置{{end}}
+{{define "content"}}
+<div class="page-heading"><div><p class="eyebrow">外观与公开信息</p><h1>站点设置</h1><p class="meta">保存后立即生效，无需重启。</p></div></div>
+{{if .Data.Flash}}<p class="flash error">{{.Data.Flash}}</p>{{end}}
+<form class="admin-form admin-form-wide" method="post" action="/admin/settings">
+<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
+<fieldset><legend>品牌</legend><p class="section-help">中文名称用于导航与页脚；英文名称仅在填写后加入浏览器标题。</p>
+<label>中文名称 <input name="site_name" type="text" required maxlength="64" value="{{.Data.Form.Name}}" placeholder="拾句"></label>
+<label>英文名称 <input name="english_name" type="text" maxlength="64" value="{{.Data.Form.EnglishName}}" placeholder="Quotewisp"><span class="meta">可选；有值时与中文名称共同展示</span></label>
+<label>站点标语（Slogan） <input name="slogan" type="text" maxlength="128" value="{{.Data.Form.Slogan}}" placeholder="偶遇一句话"><span class="meta">可选；有值时展示在首页句子上方</span></label>
+</fieldset>
+<fieldset><legend>公开信息</legend>
+<label>站点公开地址 <input name="public_origin" type="url" maxlength="512" value="{{.Data.Form.PublicOrigin}}" placeholder="https://example.com"><span class="meta">接口文档示例中的 API 基址；留空则用相对路径</span></label>
+<label>联系方式 <input name="contact" type="text" required maxlength="256" value="{{.Data.Form.Contact}}"><span class="meta">数据页「如需下架」展示</span></label>
+<label>源代码地址 <input name="repo_url" type="url" maxlength="512" value="{{.Data.Form.RepoURL}}" placeholder="https://"><span class="meta">留空则页脚不展示 GitHub 图标</span></label>
+</fieldset>
+<fieldset><legend>备案</legend>
+<label>备案号 <input name="beian_text" type="text" maxlength="128" value="{{.Data.Form.BeianText}}" placeholder="京ICP备00000000号-1"></label>
+<label>备案链接 <input name="beian_url" type="url" maxlength="512" value="{{.Data.Form.BeianURL}}" placeholder="https://beian.miit.gov.cn/"><span class="meta">填写链接时必须同时填写备案号；公安备案链接可带查询参数</span></label>
+</fieldset>
+<div class="form-actions"><button type="submit">保存设置</button></div>
+</form>
+{{end}}

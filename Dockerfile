@@ -15,7 +15,7 @@ RUN test -n "$VERSION" && test -n "$GIT_COMMIT" && test -n "$BUILD_TIME" && \
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/sentence-api /sentence-api
-COPY migrations/000001_initial.up.sql migrations/000001_initial.down.sql /migrations/
+COPY migrations/*.sql /migrations/
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/sentence-api"]

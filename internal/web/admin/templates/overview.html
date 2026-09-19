@@ -1,0 +1,43 @@
+{{define "overview"}}{{template "admin_layout" .}}{{end}}
+{{define "title"}}概况{{end}}
+{{define "content"}}
+<div class="page-heading"><div><p class="eyebrow">总览</p><h1>概况</h1><p class="meta">句子与投稿来自数据库；接口次数来自读 API 进程自启动以来的计数{{if not .Data.API.OK}}，当前未连通{{end}}。</p></div></div>
+<section class="stat-grid" aria-label="内容规模">
+<a class="stat-card" href="/admin/sentences?status=1">
+<p class="stat-label">已发布句子</p>
+<p class="stat-value">{{.Data.Overview.PublishedSentences}}</p>
+</a>
+<a class="stat-card" href="/admin/sentences?status=3">
+<p class="stat-label">已停用句子</p>
+<p class="stat-value">{{.Data.Overview.DisabledSentences}}</p>
+</a>
+<a class="stat-card" href="/admin/categories">
+<p class="stat-label">启用分类</p>
+<p class="stat-value">{{.Data.Overview.EnabledCategories}}</p>
+</a>
+<a class="stat-card" href="/admin/submissions">
+<p class="stat-label">待审投稿</p>
+<p class="stat-value">{{.Data.Overview.PendingSubmissions}}</p>
+</a>
+</section>
+<section class="stat-grid" aria-label="接口与投稿">
+<div class="stat-card">
+<p class="stat-label">读接口调用</p>
+<p class="stat-value">{{if .Data.API.OK}}{{.Data.API.Total}}{{else}}—{{end}}</p>
+<p class="stat-note">随机 {{if .Data.API.OK}}{{.Data.API.Random}}{{else}}—{{end}} · UUID {{if .Data.API.OK}}{{.Data.API.UUID}}{{else}}—{{end}} · 分类 {{if .Data.API.OK}}{{.Data.API.Categories}}{{else}}—{{end}}</p>
+</div>
+<a class="stat-card" href="/admin/submissions?status=approved">
+<p class="stat-label">已通过投稿</p>
+<p class="stat-value">{{.Data.Overview.ApprovedSubmissions}}</p>
+</a>
+<a class="stat-card" href="/admin/submissions?status=rejected">
+<p class="stat-label">已拒绝投稿</p>
+<p class="stat-value">{{.Data.Overview.RejectedSubmissions}}</p>
+</a>
+<div class="stat-card">
+<p class="stat-label">近 24 小时投稿</p>
+<p class="stat-value">{{.Data.Overview.RecentSubmissions}}</p>
+</div>
+</section>
+<p class="meta">数据集版本 {{.Data.Overview.DatasetVersion}}{{if not .Data.Overview.DatasetPublishedAt.IsZero}} · 最近发布 {{formatTime .Data.Overview.DatasetPublishedAt}}{{end}}</p>
+{{end}}

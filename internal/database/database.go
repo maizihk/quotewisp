@@ -22,7 +22,11 @@ import (
 	"sentence-api/migrations"
 )
 
-const RequiredSchemaVersion uint = 2
+const (
+	MinReadSchemaVersion  uint = 1
+	CurrentSchemaVersion  uint = 4
+	RequiredSchemaVersion      = CurrentSchemaVersion
+)
 
 type PoolConfig struct {
 	MaxOpenConns, MaxIdleConns int
@@ -160,15 +164,26 @@ func SchemaVersion(ctx context.Context, db *sql.DB) (uint, bool, error) {
 	}
 	return v, dirty, nil
 }
-func CheckSchema(ctx context.Context, db *sql.DB) error {
+func CheckSchema(ctx context.Context, db *sql.DB, min, max uint) error {
+	if min == 0 || max < min {
+		return errors.New("invalid schema version range")
+	}
 	v, d, e := SchemaVersion(ctx, db)
 	if e != nil {
 		return e
 	}
-	if d || v != RequiredSchemaVersion {
+	if d || v < min || v > max {
 		return fmt.Errorf("unsupported schema state: version=%d dirty=%t", v, d)
 	}
 	return nil
+}
+
+func CheckReadSchema(ctx context.Context, db *sql.DB) error {
+	return CheckSchema(ctx, db, MinReadSchemaVersion, CurrentSchemaVersion)
+}
+
+func CheckWriteSchema(ctx context.Context, db *sql.DB) error {
+	return CheckSchema(ctx, db, CurrentSchemaVersion, CurrentSchemaVersion)
 }
 
 type Loader struct{ DB *sql.DB }

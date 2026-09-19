@@ -13,6 +13,7 @@ import (
 
 type submitFormData struct {
 	Categories  []categoryView
+	Recent      []recentView
 	FormToken   string
 	Values      submitValues
 	FieldErrors map[string]string
@@ -126,6 +127,7 @@ func (h *handler) renderSubmitForm(w http.ResponseWriter, r *http.Request, statu
 	}
 	h.renderer.HTML(w, r, h.submitPages, "submit", status, submitFormData{
 		Categories:  cats,
+		Recent:      recentViews(data),
 		FormToken:   token,
 		Values:      values,
 		FieldErrors: fieldErrors,

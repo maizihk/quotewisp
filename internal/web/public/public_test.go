@@ -60,6 +60,7 @@ func newTestEnv(t *testing.T, limiter *ratelimit.Limiter) *testEnv {
 		Version: 42,
 		Categories: []store.PublicCategory{
 			{Code: "original", Name: "原创", Count: 2},
+			{Code: "empty", Name: "空分类", Count: 0},
 		},
 		Recent: []store.RecentItem{
 			{Content: "最近一句", CategoryName: "原创", Nickname: "测试者"},
@@ -73,9 +74,12 @@ func newTestEnv(t *testing.T, limiter *ratelimit.Limiter) *testEnv {
 		t.Fatal(err)
 	}
 	renderer, err := render.New(render.Site{
-		Name:    "句子 API",
-		Contact: "admin@example.com",
-		RepoURL: "https://github.com/example/sentence-api",
+		Name:         "句子 API",
+		EnglishName:  "Sentence API",
+		Slogan:       "偶遇一句话。",
+		Contact:      "admin@example.com",
+		RepoURL:      "https://github.com/example/sentence-api",
+		PublicOrigin: "https://example.com",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +98,6 @@ func newTestEnv(t *testing.T, limiter *ratelimit.Limiter) *testEnv {
 		Logger:       nil,
 		Metrics:      metrics,
 		PendingLimit: 1000,
-		APIBaseURL:   "https://example.com",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -173,20 +176,75 @@ func withMiddleware(req *http.Request) *http.Request {
 	return out
 }
 
-func TestIndexRendersRecentAndNav(t *testing.T) {
+func TestIndexRendersReaderAndNav(t *testing.T) {
 	env := newTestEnv(t, nil)
 	resp := env.do(t, http.MethodGet, "/", nil)
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
 	for _, want := range []string{
-		"最近一句", "原创", "测试者",
+		"<title>句子 API Sentence API · 偶遇一句话。</title>", "偶遇一句话",
 		`href="/docs"`, `href="/submit"`, `href="/dataset"`,
+		`class="home"`,
+		`class="home-page"`, `class="site-main home-main"`,
 		`src="/assets/random.js"`,
+		"https://example.com/api/v1",
+		`id="random-btn"`, "换一句",
+		`id="copy-btn"`, "复制", `id="random-status"`, `aria-live="polite"`, `data-length="short"`,
+		`"original":"原创"`,
+		"© 句子 API", `class="site-github"`, `target="_blank"`, `rel="noopener noreferrer"`, "aria-label=\"源代码\"",
+		`data-theme-toggle`, "theme-icon-sun", "theme-icon-moon",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in index body", want)
 		}
+	}
+	if strings.Contains(text, `id="category-select"`) || strings.Contains(text, `class="category-filter"`) {
+		t.Fatal("homepage should not render a category filter")
+	}
+	for _, old := range []string{"开箱即用", "按需取句", "可投稿可下载", `class="home-points"`} {
+		if strings.Contains(text, old) {
+			t.Fatalf("index should not contain old marketing copy %q", old)
+		}
+	}
+	if strings.Contains(text, "sentences-bundle") {
+		t.Fatal("index footer should not repeat dataset attribution")
+	}
+	if strings.Contains(text, "最近通过") || strings.Contains(text, "最近一句") {
+		t.Fatal("recent submissions belong on /submit, not index")
+	}
+	if strings.Contains(text, "intro-actions") {
+		t.Fatal("index intro should not show docs/source buttons")
+	}
+	if strings.Contains(text, "一言") {
+		t.Fatal("index should not mention 一言")
+	}
+	if strings.Contains(text, "下架请求请联系") {
+		t.Fatal("takedown contact belongs on /dataset, not the footer")
+	}
+}
+
+func TestDatasetPageShowsAttribution(t *testing.T) {
+	env := newTestEnv(t, nil)
+	resp := env.do(t, http.MethodGet, "/dataset", nil)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	text := string(body)
+	for _, want := range []string{
+		"hitokoto-osc/sentences-bundle",
+		`target="_blank"`,
+		`rel="noopener noreferrer"`,
+		"/dataset/LICENSE.txt",
+		"/dataset/sentences.json",
+		"下架请求",
+		"admin@example.com",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in dataset body", want)
+		}
+	}
+	if strings.Contains(text, "独立实现") {
+		t.Fatal("dataset page should not claim independent implementation")
 	}
 }
 
@@ -197,12 +255,36 @@ func TestDocsShowsCategoryTableAndErrorCodes(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
 	for _, want := range []string{
-		"original", "原创", "invalid-parameter", "not-found", "method-not-allowed",
-		"meta.dataset_version", "42", "curl -sS 'https://example.com/api/v1/sentences/random'",
+		"original", "原创", "42",
+		`href="#examples"`, `id="examples"`, `href="#random"`, `id="random"`,
+		`href="#response"`, `id="response"`, `href="#categories"`, `id="categories"`,
+		`href="#errors"`, `id="errors"`, `href="#conventions"`, `id="conventions"`,
+		"fetch('https://example.com/api/v1')",
+		"fetch('https://example.com/api/v1?categories=original')",
+		"min_length=10&amp;max_length=1000",
+		"response.ok", "console.log(body.data)", `console.error('读取失败'`, "不接受查询参数", "不会放宽条件", "等概率随机", "可能连续返回同一句",
+		"data.uuid", "data.content", "data.category", "data.source", "data.author", "data.length", "meta.dataset_version",
+		"Unicode 码点数", "空字符串", "application/problem+json",
+		"invalid-parameter", "cors-denied", "not-found", "method-not-allowed", "not-ready",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in docs body", want)
 		}
+	}
+	for _, hide := range []string{
+		"curl", "unauthorized", "reload-in-progress", "<h3>列出分类</h3>",
+		"/api/v1/sentences/{uuid}", "一言",
+		"跟随系统",
+	} {
+		if strings.Contains(text, hide) {
+			t.Fatalf("docs should not contain %q", hide)
+		}
+	}
+	if strings.Index(text, `id="examples"`) > strings.Index(text, `id="random"`) {
+		t.Fatal("examples should appear before endpoint details")
+	}
+	if strings.Count(text, "response.ok") != 3 || strings.Count(text, "console.log(body.data)") != 3 {
+		t.Fatal("each quick example should independently check and print its response")
 	}
 }
 
@@ -217,6 +299,11 @@ func TestGetSubmitContainsTokenAndHoneypot(t *testing.T) {
 	}
 	if !strings.Contains(text, `name="website"`) || !strings.Contains(text, "visually-hidden") {
 		t.Fatal("missing honeypot field")
+	}
+	for _, want := range []string{"最近通过", "最近一句", "原创", "测试者", "submit-grid", `class="agree"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in submit body", want)
+		}
 	}
 }
 
@@ -510,6 +597,8 @@ func TestRouteName(t *testing.T) {
 		"/dataset/sentences.json": "/dataset/sentences.json",
 		"/dataset/LICENSE.txt":    "/dataset/LICENSE.txt",
 		"/static/site.css":        "/static/*",
+		"/static/admin.css":       "/static/*",
+		"/static/theme.js":        "/static/*",
 		"/nope":                   "unmatched",
 	}
 	for path, want := range cases {

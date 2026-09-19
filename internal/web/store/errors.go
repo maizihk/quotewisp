@@ -10,6 +10,7 @@ var (
 	ErrCategoryDisabled = errors.New("category disabled")
 	ErrLastAdmin        = errors.New("last admin")
 	ErrQueueFull        = errors.New("queue full")
+	ErrStaleAuth        = errors.New("stale auth")
 )
 
 type ValidationError struct {

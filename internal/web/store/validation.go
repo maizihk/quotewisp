@@ -1,6 +1,7 @@
 package store
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -30,6 +31,16 @@ func ValidateCategoryCode(code string) error {
 func ValidateCategoryName(name string) error {
 	if !validText(name, 64, 256, false) {
 		return &ValidationError{Field: "name", Reason: "invalid category name"}
+	}
+	return nil
+}
+
+func ValidateWebSentenceFields(content, source, author string, maxContentRunes int) error {
+	if err := ValidateSentenceFields(content, source, author, maxContentRunes); err != nil {
+		return err
+	}
+	if source == "" && author == "" {
+		return &ValidationError{Field: "source", Reason: "出处与作者至少填写一项"}
 	}
 	return nil
 }
@@ -85,6 +96,94 @@ func validateUUIDFilter(uuid string) error {
 		return &ValidationError{Field: "uuid", Reason: "invalid uuid"}
 	}
 	return nil
+}
+
+func NormalizeSiteSettings(in SiteSettings) SiteSettings {
+	in.Name = strings.TrimSpace(in.Name)
+	in.EnglishName = strings.TrimSpace(in.EnglishName)
+	in.Slogan = strings.TrimSpace(in.Slogan)
+	in.Contact = strings.TrimSpace(in.Contact)
+	in.PublicOrigin = strings.TrimRight(strings.TrimSpace(in.PublicOrigin), "/")
+	in.RepoURL = strings.TrimSpace(in.RepoURL)
+	in.BeianText = strings.TrimSpace(in.BeianText)
+	in.BeianURL = strings.TrimSpace(in.BeianURL)
+	return in
+}
+
+func ValidateSiteSettings(in SiteSettings) error {
+	if !validText(in.Name, 64, 256, true) {
+		return &ValidationError{Field: "site_name", Reason: "网站名称无效"}
+	}
+	if !validBrandText(in.EnglishName, 64, 256, false) {
+		return &ValidationError{Field: "english_name", Reason: "英文名称无效"}
+	}
+	if !validBrandText(in.Slogan, 128, 512, false) {
+		return &ValidationError{Field: "slogan", Reason: "品牌标语无效"}
+	}
+	if !utf8.ValidString(in.Contact) || in.Contact == "" || len(in.Contact) > 256 {
+		return &ValidationError{Field: "contact", Reason: "联系方式无效"}
+	}
+	if err := validateOptionalHTTPURL("public_origin", in.PublicOrigin, false); err != nil {
+		return err
+	}
+	if err := validateOptionalHTTPURL("repo_url", in.RepoURL, false); err != nil {
+		return err
+	}
+	if in.BeianText != "" && !validText(in.BeianText, 128, 512, true) {
+		return &ValidationError{Field: "beian_text", Reason: "备案号无效"}
+	}
+	if err := validateOptionalHTTPURL("beian_url", in.BeianURL, true); err != nil {
+		return err
+	}
+	if in.BeianURL != "" && in.BeianText == "" {
+		return &ValidationError{Field: "beian_url", Reason: "填写备案链接时必须同时填写备案号"}
+	}
+	return nil
+}
+
+func validBrandText(s string, maxRunes, maxBytes int, nonempty bool) bool {
+	if s == "" {
+		return !nonempty
+	}
+	if !validText(s, maxRunes, maxBytes, nonempty) {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f {
+			return false
+		}
+	}
+	return true
+}
+
+func validateOptionalHTTPURL(field, v string, allowQuery bool) error {
+	if v == "" {
+		return nil
+	}
+	if len(v) > 512 {
+		return &ValidationError{Field: field, Reason: fieldReason(field)}
+	}
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || strings.Contains(v, "#") || u.Fragment != "" || u.RawFragment != "" {
+		return &ValidationError{Field: field, Reason: fieldReason(field)}
+	}
+	if !allowQuery && (u.RawQuery != "" || u.ForceQuery || strings.Contains(v, "?")) {
+		return &ValidationError{Field: field, Reason: fieldReason(field)}
+	}
+	return nil
+}
+
+func fieldReason(field string) string {
+	switch field {
+	case "public_origin":
+		return "站点公开地址无效"
+	case "repo_url":
+		return "源代码地址无效"
+	case "beian_url":
+		return "备案链接无效"
+	default:
+		return "参数无效"
+	}
 }
 
 func validText(s string, maxRunes, maxBytes int, nonempty bool) bool {

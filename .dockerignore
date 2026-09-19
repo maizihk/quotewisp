@@ -2,6 +2,7 @@
 .github
 .agents
 .codex
+.cache
 *.env
 .env*
 !.env.example

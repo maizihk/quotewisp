@@ -39,6 +39,9 @@ type Config struct {
 	ShutdownTimeout        time.Duration
 	WebSecretKey           string
 	SiteContact            string
+	SiteRepoURL            string
+	APIBaseURL             string
+	APIMetricsURL          string
 	CookieSecure           bool
 	SubmissionRatePerHour  int
 	SubmissionRatePerDay   int
@@ -94,6 +97,15 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 			return c, fmt.Errorf("WEB_SECRET_KEY must be 32-256 printable non-whitespace ASCII bytes")
 		}
 		if c.SiteContact, err = siteContact(lookup); err != nil {
+			return c, err
+		}
+		if c.SiteRepoURL, err = siteRepoURL(lookup); err != nil {
+			return c, err
+		}
+		if c.APIBaseURL, err = apiBaseURL(lookup); err != nil {
+			return c, err
+		}
+		if c.APIMetricsURL, err = apiMetricsURL(lookup); err != nil {
 			return c, err
 		}
 		if c.CookieSecure, err = boolEnv(lookup, "COOKIE_SECURE", true); err != nil {
@@ -319,6 +331,50 @@ func siteContact(l func(string) (string, bool)) (string, error) {
 	}
 	if len(v) > 256 || !utf8.ValidString(v) {
 		return "", fmt.Errorf("SITE_CONTACT is invalid")
+	}
+	return v, nil
+}
+func siteRepoURL(l func(string) (string, bool)) (string, error) {
+	return optionalHTTPURL(l, "SITE_REPO_URL")
+}
+func apiBaseURL(l func(string) (string, bool)) (string, error) {
+	v, err := optionalHTTPURL(l, "API_BASE_URL")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(v, "/"), nil
+}
+func apiMetricsURL(l func(string) (string, bool)) (string, error) {
+	v, err := optionalHTTPURL(l, "API_METRICS_URL")
+	if err != nil {
+		return "", err
+	}
+	if v == "" {
+		return "", nil
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return "", fmt.Errorf("API_METRICS_URL is invalid")
+	}
+	if u.Path == "" || u.Path == "/" {
+		return strings.TrimRight(v, "/") + "/metrics", nil
+	}
+	if u.Path != "/metrics" {
+		return "", fmt.Errorf("API_METRICS_URL is invalid")
+	}
+	return v, nil
+}
+func optionalHTTPURL(l func(string) (string, bool), k string) (string, error) {
+	v, ok := l(k)
+	if !ok || v == "" {
+		return "", nil
+	}
+	if len(v) > 512 {
+		return "", fmt.Errorf("%s is invalid", k)
+	}
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(v, "#") || strings.Contains(v, "?") || u.Fragment != "" || u.RawFragment != "" {
+		return "", fmt.Errorf("%s is invalid", k)
 	}
 	return v, nil
 }

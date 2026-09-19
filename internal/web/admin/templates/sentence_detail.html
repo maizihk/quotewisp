@@ -1,18 +1,17 @@
-{{define "sentence_detail"}}{{template "layout" .}}{{end}}
+{{define "sentence_detail"}}{{template "admin_layout" .}}{{end}}
 {{define "title"}}句子 {{.Data.Item.UUID}}{{end}}
 {{define "content"}}
-{{template "admin_bar" .}}
-<h1>句子详情</h1>
+<div class="page-heading"><div><p class="eyebrow">句子详情</p><h1>{{truncate 12 .Data.Item.UUID}}</h1></div><div class="heading-actions"><a href="/admin/sentences">返回列表</a></div></div>
 {{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
-<dl>
+<dl class="detail-list">
 <dt>UUID</dt><dd>{{.Data.Item.UUID}}</dd>
-<dt>状态</dt><dd>{{sentenceStatus .Data.Item.Status}}</dd>
+<dt>状态</dt><dd><span class="status-badge {{if eq .Data.Item.Status 1}}is-success{{else}}is-muted{{end}}">{{sentenceStatus .Data.Item.Status}}</span></dd>
 <dt>长度</dt><dd>{{.Data.Item.Length}}</dd>
-{{if .Data.Item.PublishedAt}}<dt>发布时间</dt><dd>{{.Data.Item.PublishedAt}}</dd>{{end}}
+{{if .Data.Item.PublishedAt}}<dt>发布时间</dt><dd>{{formatTime .Data.Item.PublishedAt}}</dd>{{end}}
 <dt>创建时间</dt><dd>{{formatTime .Data.Item.CreatedAt}}</dd>
 {{if .Data.Item.SubmissionID}}<dt>来源投稿</dt><dd><a href="/admin/submissions/{{.Data.Item.SubmissionID}}">#{{.Data.Item.SubmissionID}}</a>（昵称：{{if .Data.Item.SubmitterNickname}}{{.Data.Item.SubmitterNickname}}{{else}}匿名{{end}}）</dd>{{end}}
 </dl>
-<form method="post" action="/admin/sentences/{{.Data.Item.UUID}}">
+<form class="admin-form content-card" method="post" action="/admin/sentences/{{.Data.Item.UUID}}">
 <input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
 <label>内容 <textarea name="content" rows="4" required>{{.Data.Form.Content}}</textarea></label>
 <label>分类
@@ -27,15 +26,14 @@
 <button type="submit">保存</button>
 </form>
 {{if eq .Data.Item.Status 1}}
-<form method="post" action="/admin/sentences/{{.Data.Item.UUID}}/disable">
+<form class="action-card danger-zone" method="post" action="/admin/sentences/{{.Data.Item.UUID}}/disable">
 <input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
-<button type="submit">停用</button>
+<button class="danger" type="submit">停用</button>
 </form>
 {{else if eq .Data.Item.Status 3}}
-<form method="post" action="/admin/sentences/{{.Data.Item.UUID}}/enable">
+<form class="action-card" method="post" action="/admin/sentences/{{.Data.Item.UUID}}/enable">
 <input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
 <button type="submit">恢复</button>
 </form>
 {{end}}
-<p><a href="/admin/sentences">返回列表</a></p>
 {{end}}

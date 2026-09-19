@@ -57,7 +57,18 @@ func (s *Store) PendingCount(ctx context.Context) (int, error) {
 }
 
 func (s *Store) CreateSubmission(ctx context.Context, n NewSubmission, pendingLimit int) (uint64, error) {
-	cat, err := lookupCategory(ctx, s.DB, n.CategoryCode)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, errors.New("begin transaction")
+	}
+	defer tx.Rollback()
+
+	var version uint64
+	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id = 1 FOR UPDATE").Scan(&version); err != nil || version == 0 {
+		return 0, errors.New("dataset version is missing or invalid")
+	}
+
+	cat, err := lookupCategory(ctx, tx, n.CategoryCode)
 	if err != nil {
 		return 0, err
 	}
@@ -66,21 +77,21 @@ func (s *Store) CreateSubmission(ctx context.Context, n NewSubmission, pendingLi
 	}
 	hash := sha256.Sum256([]byte(n.Content))
 	var dup int
-	if err = s.DB.QueryRowContext(ctx,
+	if err = tx.QueryRowContext(ctx,
 		"SELECT 1 FROM submissions WHERE status = 0 AND category_id = ? AND content_sha256 = ? LIMIT 1",
 		cat.id, hash[:]).Scan(&dup); err == nil {
 		return 0, ErrDuplicate
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return 0, errors.New("check pending duplicate")
 	}
-	count, err := s.PendingCount(ctx)
-	if err != nil {
-		return 0, err
+	var count int
+	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM submissions WHERE status = 0").Scan(&count); err != nil {
+		return 0, errors.New("count pending submissions")
 	}
 	if count >= pendingLimit {
 		return 0, ErrQueueFull
 	}
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO submissions
+	res, err := tx.ExecContext(ctx, `INSERT INTO submissions
 		(content, category_id, source, author, nickname, contact, client_ip, content_sha256, status)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		n.Content, cat.id, nullString(n.Source), nullString(n.Author), nullString(n.Nickname),
@@ -92,6 +103,9 @@ func (s *Store) CreateSubmission(ctx context.Context, n NewSubmission, pendingLi
 	if err != nil {
 		return 0, errors.New("read submission id")
 	}
+	if err = tx.Commit(); err != nil {
+		return 0, errors.New("commit transaction")
+	}
 	return uint64(id), nil
 }
 
@@ -101,11 +115,18 @@ func (s *Store) ListSubmissions(ctx context.Context, status uint8, page, size in
 		return nil, 0, errors.New("count submissions")
 	}
 	offset := pageOffset(page, size)
-	base := `SELECT s.id, s.content, c.code, c.name,
+	selectList := `SELECT s.id, s.content, c.code, c.name,
 		COALESCE(s.source, ''), COALESCE(s.author, ''), COALESCE(s.nickname, ''), COALESCE(s.contact, ''),
 		s.client_ip, s.content_sha256, s.status, COALESCE(s.reject_reason, ''), s.reviewed_by,
-		COALESCE(u.username, ''), s.reviewed_at, s.sentence_id, COALESCE(t.uuid, ''), s.created_at
-		FROM submissions s
+		COALESCE(u.username, ''), s.reviewed_at, s.sentence_id, COALESCE(t.uuid, ''), s.created_at`
+	if status == SubmissionPending {
+		selectList += `, EXISTS (
+			SELECT 1 FROM submissions d
+			WHERE d.status = 0 AND d.category_id = s.category_id
+			  AND d.content_sha256 = s.content_sha256 AND d.id <> s.id
+		)`
+	}
+	from := ` FROM submissions s
 		JOIN categories c ON c.id = s.category_id
 		LEFT JOIN admin_users u ON u.id = s.reviewed_by
 		LEFT JOIN sentences t ON t.id = s.sentence_id
@@ -113,9 +134,9 @@ func (s *Store) ListSubmissions(ctx context.Context, status uint8, page, size in
 	var rows *sql.Rows
 	var err error
 	if status == SubmissionPending {
-		rows, err = s.DB.QueryContext(ctx, base+` ORDER BY s.created_at ASC LIMIT ? OFFSET ?`, status, size, offset)
+		rows, err = s.DB.QueryContext(ctx, selectList+from+` ORDER BY s.created_at ASC LIMIT ? OFFSET ?`, status, size, offset)
 	} else {
-		rows, err = s.DB.QueryContext(ctx, base+` ORDER BY s.reviewed_at DESC LIMIT ? OFFSET ?`, status, size, offset)
+		rows, err = s.DB.QueryContext(ctx, selectList+from+` ORDER BY s.reviewed_at DESC LIMIT ? OFFSET ?`, status, size, offset)
 	}
 	if err != nil {
 		return nil, 0, errors.New("list submissions")
@@ -123,16 +144,15 @@ func (s *Store) ListSubmissions(ctx context.Context, status uint8, page, size in
 	defer rows.Close()
 	var items []Submission
 	for rows.Next() {
-		item, err := scanSubmission(rows)
+		var item Submission
+		var err error
+		if status == SubmissionPending {
+			item, err = scanSubmission(rows, true)
+		} else {
+			item, err = scanSubmission(rows, false)
+		}
 		if err != nil {
 			return nil, 0, err
-		}
-		if status == SubmissionPending {
-			dup, err := s.hasPendingDuplicate(ctx, item.ID, item.CategoryCode, item.ContentSHA256)
-			if err != nil {
-				return nil, 0, err
-			}
-			item.DuplicatePending = dup
 		}
 		items = append(items, item)
 	}
@@ -152,7 +172,7 @@ func (s *Store) GetSubmission(ctx context.Context, id uint64) (Submission, error
 		LEFT JOIN admin_users u ON u.id = s.reviewed_by
 		LEFT JOIN sentences t ON t.id = s.sentence_id
 		WHERE s.id = ?`, id)
-	item, err := scanSubmission(row)
+	item, err := scanSubmission(row, false)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Submission{}, ErrNotFound
 	}
@@ -297,17 +317,21 @@ type submissionScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanSubmission(row submissionScanner) (Submission, error) {
+func scanSubmission(row submissionScanner, withDup bool) (Submission, error) {
 	var item Submission
 	var clientIP []byte
 	var hash []byte
 	var reviewedBy sql.NullInt64
 	var reviewedAt sql.NullTime
 	var sentenceID sql.NullInt64
-	if err := row.Scan(&item.ID, &item.Content, &item.CategoryCode, &item.CategoryName,
+	dest := []any{&item.ID, &item.Content, &item.CategoryCode, &item.CategoryName,
 		&item.Source, &item.Author, &item.Nickname, &item.Contact, &clientIP, &hash,
 		&item.Status, &item.RejectReason, &reviewedBy, &item.ReviewedByUsername, &reviewedAt,
-		&sentenceID, &item.SentenceUUID, &item.CreatedAt); err != nil {
+		&sentenceID, &item.SentenceUUID, &item.CreatedAt}
+	if withDup {
+		dest = append(dest, &item.DuplicatePending)
+	}
+	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Submission{}, ErrNotFound
 		}

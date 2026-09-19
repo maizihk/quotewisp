@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"time"
@@ -27,6 +28,54 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 		return errors.New("insert session")
 	}
 	return nil
+}
+
+// CreateLoginSession inserts a session only if the account is still enabled and
+// still uses passwordHash. The row lock serializes this with password reset.
+func (s *Store) CreateLoginSession(ctx context.Context, sess Session, passwordHash string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("begin transaction")
+	}
+	defer tx.Rollback()
+
+	var currentHash string
+	var enabled bool
+	err = tx.QueryRowContext(ctx, "SELECT password_hash, enabled FROM admin_users WHERE id = ? FOR UPDATE", sess.AdminID).
+		Scan(&currentHash, &enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return errors.New("lock admin")
+	}
+	if !enabled || !sameSecret(currentHash, passwordHash) {
+		return ErrStaleAuth
+	}
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO admin_sessions
+		(token_hash, admin_id, csrf_token, created_at, last_seen_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		sess.TokenHash[:], sess.AdminID, sess.CSRFToken[:],
+		sess.CreatedAt.UTC(), sess.LastSeenAt.UTC(), sess.ExpiresAt.UTC())
+	if err != nil {
+		return errors.New("insert session")
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE admin_users SET last_login_at = ? WHERE id = ?", sess.CreatedAt.UTC(), sess.AdminID); err != nil {
+		return errors.New("update admin login")
+	}
+	if err = tx.Commit(); err != nil {
+		return errors.New("commit transaction")
+	}
+	return nil
+}
+
+func sameSecret(a, b string) bool {
+	ab, bb := []byte(a), []byte(b)
+	if len(ab) != len(bb) {
+		return false
+	}
+	return subtle.ConstantTimeCompare(ab, bb) == 1
 }
 
 func (s *Store) GetSession(ctx context.Context, tokenHash [32]byte, now time.Time) (Session, error) {

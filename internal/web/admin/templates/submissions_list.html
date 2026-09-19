@@ -1,10 +1,9 @@
-{{define "submissions_list"}}{{template "layout" .}}{{end}}
+{{define "submissions_list"}}{{template "admin_layout" .}}{{end}}
 {{define "title"}}{{if eq .Data.Status "approved"}}已通过投稿{{else}}已拒绝投稿{{end}}{{end}}
 {{define "content"}}
-{{template "admin_bar" .}}
-<h1>{{if eq .Data.Status "approved"}}已通过投稿{{else}}已拒绝投稿{{end}}</h1>
+<div class="page-heading"><div><p class="eyebrow">审核记录</p><h1>{{if eq .Data.Status "approved"}}已通过投稿{{else}}已拒绝投稿{{end}}</h1><p class="meta">共 {{.Data.Total}} 条记录</p></div><div class="heading-actions"><a class="button button-secondary" href="/admin/submissions">待审</a>{{if eq .Data.Status "approved"}}<a class="button button-secondary" href="/admin/submissions?status=rejected">已拒绝</a>{{else}}<a class="button button-secondary" href="/admin/submissions?status=approved">已通过</a>{{end}}</div></div>
 {{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
-<p>共 {{.Data.Total}} 条</p>
+<div class="table-shell">
 <table>
 <thead><tr><th>内容</th><th>分类</th><th>出处</th><th>作者</th><th>昵称</th><th>审核时间</th><th></th></tr></thead>
 <tbody>
@@ -15,7 +14,7 @@
 <td>{{.Source}}</td>
 <td>{{.Author}}</td>
 <td>{{if .Nickname}}{{.Nickname}}{{else}}匿名{{end}}</td>
-<td>{{if .ReviewedAt}}{{.ReviewedAt}}{{end}}</td>
+<td class="cell-time">{{if .ReviewedAt}}{{formatTime .ReviewedAt}}{{end}}</td>
 <td><a href="/admin/submissions/{{.ID}}">详情</a></td>
 </tr>
 {{else}}
@@ -23,6 +22,7 @@
 {{end}}
 </tbody>
 </table>
+</div>
 {{if gt .Data.Pages 1}}
 <nav class="pagination">
 {{if .Data.PrevPage}}<a href="/admin/submissions?status={{.Data.Status}}&amp;page={{.Data.PrevPage}}">上一页</a>{{end}}

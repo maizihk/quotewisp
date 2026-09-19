@@ -10,13 +10,19 @@ import (
 
 type usersListPageData struct {
 	basePageData
-	Items    []store.AdminUser
-	Username string
+	Items        []store.AdminUser
+	FormUsername string
 }
 
 type passwordPageData struct {
 	basePageData
 	Flash string
+}
+
+type userResetPasswordPageData struct {
+	basePageData
+	TargetID       uint64
+	TargetUsername string
 }
 
 func (h *handler) getUsersList(w http.ResponseWriter, r *http.Request) {
@@ -125,18 +131,28 @@ func (h *handler) postUserResetPassword(w http.ResponseWriter, r *http.Request) 
 		h.renderer.NotFound(w, r)
 		return
 	}
+	target, err := h.store.GetAdminByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		h.renderer.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.logger.Error("admin load reset password target failed", "admin_id", sess.AdminID)
+		h.renderer.Error(w, r, http.StatusInternalServerError, "internal-error", "内部错误", "加载管理员失败")
+		return
+	}
 	password := r.FormValue("password")
 	confirm := r.FormValue("password_confirm")
 	if password != confirm {
-		h.renderUsersListFlash(w, r, "两次输入的密码不一致", http.StatusBadRequest)
+		h.renderUserResetPassword(w, r, target.ID, target.Username, "两次输入的密码不一致", http.StatusBadRequest)
 		return
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		h.renderUsersListFlash(w, r, "密码需 8–128 个字符", http.StatusBadRequest)
+		h.renderUserResetPassword(w, r, target.ID, target.Username, "密码需 8–128 个字符", http.StatusBadRequest)
 		return
 	}
-	if err := h.store.SetAdminPasswordHash(r.Context(), id, hash); errors.Is(err, store.ErrNotFound) {
+	if err := h.store.ResetAdminPassword(r.Context(), id, hash, nil); errors.Is(err, store.ErrNotFound) {
 		h.renderer.NotFound(w, r)
 		return
 	} else if err != nil {
@@ -144,10 +160,26 @@ func (h *handler) postUserResetPassword(w http.ResponseWriter, r *http.Request) 
 		h.renderer.Error(w, r, http.StatusInternalServerError, "internal-error", "内部错误", "重置密码失败")
 		return
 	}
-	if err := h.store.DeleteSessionsForAdmin(r.Context(), id, nil); err != nil {
-		h.logger.Error("admin delete sessions failed", "admin_id", sess.AdminID)
-	}
 	redirect(w, r, "/admin/users")
+}
+
+func (h *handler) getUserResetPassword(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUint64Param(r.PathValue("id"))
+	if !ok {
+		h.renderer.NotFound(w, r)
+		return
+	}
+	target, err := h.store.GetAdminByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		h.renderer.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.logger.Error("admin load reset password target failed", "admin_id", sessionAdminID(r))
+		h.renderer.Error(w, r, http.StatusInternalServerError, "internal-error", "内部错误", "加载管理员失败")
+		return
+	}
+	h.renderUserResetPassword(w, r, target.ID, target.Username, "", http.StatusOK)
 }
 
 func (h *handler) getPassword(w http.ResponseWriter, r *http.Request) {
@@ -183,14 +215,14 @@ func (h *handler) postPassword(w http.ResponseWriter, r *http.Request) {
 		h.renderPassword(w, r, "密码需 8–128 个字符", http.StatusBadRequest)
 		return
 	}
-	if err := h.store.SetAdminPasswordHash(r.Context(), sess.AdminID, hash); err != nil {
+	except := sess.TokenHash
+	if err := h.store.ChangeAdminPassword(r.Context(), sess.AdminID, admin.PasswordHash, hash, &except); errors.Is(err, store.ErrStaleAuth) {
+		h.renderPassword(w, r, "当前密码错误", http.StatusUnauthorized)
+		return
+	} else if err != nil {
 		h.logger.Error("admin change password failed", "admin_id", sess.AdminID)
 		h.renderer.Error(w, r, http.StatusInternalServerError, "internal-error", "内部错误", "修改密码失败")
 		return
-	}
-	except := sess.TokenHash
-	if err := h.store.DeleteSessionsForAdmin(r.Context(), sess.AdminID, &except); err != nil {
-		h.logger.Error("admin delete other sessions failed", "admin_id", sess.AdminID)
 	}
 	redirect(w, r, "/admin/password")
 }
@@ -201,7 +233,7 @@ func (h *handler) renderUserCreate(w http.ResponseWriter, r *http.Request, usern
 		h.renderer.Error(w, r, http.StatusInternalServerError, "internal-error", "内部错误", "加载列表失败")
 		return
 	}
-	data := usersListPageData{basePageData: h.baseData(r.Context()), Items: items, Username: username}
+	data := usersListPageData{basePageData: h.baseData(r.Context()), Items: items, FormUsername: username}
 	data.Flash = flash
 	h.renderPage(w, r, []string{pageFile("users_list")}, "users_list", status, data)
 }
@@ -221,4 +253,14 @@ func (h *handler) renderPassword(w http.ResponseWriter, r *http.Request, flash s
 	data := passwordPageData{basePageData: h.baseData(r.Context())}
 	data.Flash = flash
 	h.renderPage(w, r, []string{pageFile("password")}, "password", status, data)
+}
+
+func (h *handler) renderUserResetPassword(w http.ResponseWriter, r *http.Request, id uint64, username, flash string, status int) {
+	data := userResetPasswordPageData{
+		basePageData:   h.baseData(r.Context()),
+		TargetID:       id,
+		TargetUsername: username,
+	}
+	data.Flash = flash
+	h.renderPage(w, r, []string{pageFile("user_reset_password")}, "user_reset_password", status, data)
 }

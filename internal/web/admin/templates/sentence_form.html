@@ -1,10 +1,9 @@
-{{define "sentence_form"}}{{template "layout" .}}{{end}}
+{{define "sentence_form"}}{{template "admin_layout" .}}{{end}}
 {{define "title"}}新增句子{{end}}
 {{define "content"}}
-{{template "admin_bar" .}}
-<h1>新增句子</h1>
+<div class="page-heading"><div><p class="eyebrow">内容库</p><h1>新增句子</h1></div><div class="heading-actions"><a href="/admin/sentences">返回列表</a></div></div>
 {{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
-<form method="post" action="/admin/sentences">
+<form class="admin-form content-card" method="post" action="/admin/sentences">
 <input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
 <label>内容 <textarea name="content" rows="4" required>{{.Data.Form.Content}}</textarea></label>
 <label>分类
@@ -18,5 +17,4 @@
 <label>作者 <input name="author" value="{{.Data.Form.Author}}"></label>
 <button type="submit">创建</button>
 </form>
-<p><a href="/admin/sentences">返回列表</a></p>
 {{end}}

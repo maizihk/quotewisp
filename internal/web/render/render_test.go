@@ -2,6 +2,7 @@ package render
 
 import (
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -20,10 +21,11 @@ var testdataFS embed.FS
 func testRenderer(t *testing.T) *Renderer {
 	t.Helper()
 	r, err := New(Site{
-		Name:    "句子 API",
-		Contact: "admin@example.com",
-		RepoURL: "https://github.com/example/sentence-api",
-		Version: "test",
+		Name:     "句子 API",
+		Contact:  "admin@example.com",
+		RepoURL:  "https://github.com/example/sentence-api",
+		Version:  "test",
+		AssetRev: "testrev",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +55,23 @@ func TestEmbeddedAssetsParse(t *testing.T) {
 	if len(strings.TrimSpace(string(css))) == 0 {
 		t.Fatal("site.css is empty")
 	}
+	adminCSS, err := staticFS.ReadFile("static/admin.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.TrimSpace(string(adminCSS))) == 0 {
+		t.Fatal("admin.css is empty")
+	}
+	js, err := staticFS.ReadFile("static/theme.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), "prefers-color-scheme") {
+		t.Fatal("theme.js missing system color-scheme handling")
+	}
+	if strings.Contains(string(js), "跟随系统") {
+		t.Fatal("theme.js should not mention 跟随系统")
+	}
 }
 
 func TestLayoutRendersPage(t *testing.T) {
@@ -61,7 +80,7 @@ func TestLayoutRendersPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := withRequestID(httptest.NewRequest(http.MethodGet, "/", nil))
+	req := withRequestID(httptest.NewRequest(http.MethodGet, "/docs", nil))
 	w := httptest.NewRecorder()
 	r.HTML(w, req, pages, "page", http.StatusOK, nil)
 
@@ -69,25 +88,59 @@ func TestLayoutRendersPage(t *testing.T) {
 	for _, want := range []string{
 		"测试页 · 句子 API",
 		`href="/"`, "首页",
-		`href="/docs"`, "接口文档",
+		`href="/docs"`, ">文档</a>",
 		`href="/submit"`, "投稿",
 		`href="/dataset"`, "数据",
-		"hitokoto-osc/sentences-bundle",
-		`href="/dataset/LICENSE.txt"`, "AGPL v3",
-		`href="/dataset/sentences.json"`, "本站句子库（含用户投稿）在相同条件下开放下载",
-		`href="https://github.com/example/sentence-api"`, "源代码",
-		"admin@example.com",
+		"© 句子 API",
+		`href="https://github.com/example/sentence-api"`, `target="_blank"`, `rel="noopener noreferrer"`, `aria-label="源代码"`, `class="site-github"`,
 		"页面正文",
+		`href="/static/site.css?v=testrev"`,
+		`src="/static/theme.js?v=testrev"`,
+		`data-theme-toggle`, "theme-icon-sun", "theme-icon-moon",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q in:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "site-beian") {
+		t.Fatal("empty beian should be omitted")
+	}
+	if strings.Contains(body, "sentences-bundle") || strings.Contains(body, "独立实现") {
+		t.Fatal("footer should not carry dataset attribution")
+	}
+	if strings.Contains(body, "跟随系统") {
+		t.Fatal("theme toggle should not show 跟随系统")
 	}
 	if ct := w.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
 		t.Fatalf("content-type=%q", ct)
 	}
 	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Fatalf("cache-control=%q", cc)
+	}
+}
+
+func TestPagesCanBeBuiltAfterRenderingError(t *testing.T) {
+	r := testRenderer(t)
+	req := withRequestID(httptest.NewRequest(http.MethodGet, "/missing", nil))
+	r.Error(httptest.NewRecorder(), req, http.StatusNotFound, "not-found", "未找到", "请求的资源不存在")
+	pages, err := r.Pages(testdataFS, "testdata/page.html")
+	if err != nil {
+		t.Fatalf("Pages after Error: %v", err)
+	}
+	w := httptest.NewRecorder()
+	r.HTML(w, withRequestID(httptest.NewRequest(http.MethodGet, "/docs", nil)), pages, "page", http.StatusOK, nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "页面正文") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestErrorAtRootDoesNotUseHomeLayout(t *testing.T) {
+	r := testRenderer(t)
+	req := withRequestID(httptest.NewRequest(http.MethodGet, "/", nil))
+	w := httptest.NewRecorder()
+	r.NotFound(w, req)
+	if strings.Contains(w.Body.String(), `class="home-page"`) || strings.Contains(w.Body.String(), "home-main") {
+		t.Fatal("root error page should not use homepage layout")
 	}
 }
 
@@ -100,15 +153,77 @@ func TestLayoutOmitsRepoWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
 	w := httptest.NewRecorder()
 	r.HTML(w, req, pages, "page", http.StatusOK, nil)
 	body := w.Body.String()
-	if strings.Contains(body, "源代码") {
+	if strings.Contains(body, "源代码") || strings.Contains(body, "site-github") {
 		t.Fatalf("repo link should be omitted: %s", body)
 	}
-	if !strings.Contains(body, "程序为独立实现。") {
-		t.Fatal("expected standalone implementation text")
+	if !strings.Contains(body, "© 句子 API") {
+		t.Fatal("expected copyright")
+	}
+}
+
+func TestBrandTitlesEscapeConfiguredValues(t *testing.T) {
+	site := Site{Name: `<b>拾句</b>`, EnglishName: `Quote<script>`, Slogan: `偶遇 & 一句话`}
+	if got := site.DisplayName(); got != `<b>拾句</b> Quote<script>` {
+		t.Fatalf("display name=%q", got)
+	}
+	if got := site.HomeTitle(); got != `<b>拾句</b> Quote<script> · 偶遇 & 一句话` {
+		t.Fatalf("home title=%q", got)
+	}
+	if got := (Site{Name: "拾句"}).HomeTitle(); got != "拾句" {
+		t.Fatalf("empty optional brand title=%q", got)
+	}
+	r, err := New(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := r.Pages(testdataFS, "testdata/page.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	r.HTML(w, httptest.NewRequest(http.MethodGet, "/docs", nil), pages, "page", http.StatusOK, nil)
+	body := w.Body.String()
+	if !strings.Contains(body, `测试页 · &lt;b&gt;拾句&lt;/b&gt; Quote&lt;script&gt;`) || strings.Contains(body, `<script>`) {
+		t.Fatalf("brand was not safely escaped: %s", body)
+	}
+}
+
+func TestNavActiveDoesNotMisclassifySubmissionDetail(t *testing.T) {
+	v := View{Path: "/admin/submissions/42"}
+	if navActive(v, "/admin/submissions") || navActive(v, "/admin/submissions?status=approved") {
+		t.Fatal("submission detail without list status must not highlight the pending or processed list")
+	}
+}
+
+func TestLayoutBeianAndReplaceSite(t *testing.T) {
+	r, err := New(Site{Name: "旧名", Contact: "old@example.com", BeianText: "京ICP备1号", BeianURL: "https://beian.miit.gov.cn/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := r.Pages(testdataFS, "testdata/page.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	w := httptest.NewRecorder()
+	r.HTML(w, req, pages, "page", http.StatusOK, nil)
+	body := w.Body.String()
+	if !strings.Contains(body, `href="https://beian.miit.gov.cn/"`) || !strings.Contains(body, "京ICP备1号") || !strings.Contains(body, `target="_blank"`) {
+		t.Fatalf("missing beian link: %s", body)
+	}
+	r.ReplaceSite(r.Site().Overlay("新名", "New Name", "每日一句", "new@example.com", "https://example.com", "", "沪ICP备2号", ""))
+	w = httptest.NewRecorder()
+	r.HTML(w, req, pages, "page", http.StatusOK, nil)
+	body = w.Body.String()
+	if !strings.Contains(body, "测试页 · 新名 New Name") || !strings.Contains(body, "© 新名") || !strings.Contains(body, "沪ICP备2号") {
+		t.Fatalf("replace site not applied: %s", body)
+	}
+	if strings.Contains(body, "href=\"https://beian.miit.gov.cn/\"") {
+		t.Fatal("old beian url should be gone")
 	}
 }
 
@@ -237,6 +352,16 @@ func TestStaticHandler(t *testing.T) {
 		t.Fatal("css body missing expected content")
 	}
 
+	req = httptest.NewRequest(http.MethodGet, "/static/theme.js", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("theme.js status=%d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
+		t.Fatalf("theme.js content-type=%q", w.Header().Get("Content-Type"))
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/static/missing.css", nil)
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -318,7 +443,12 @@ func TestFormTokenTampered(t *testing.T) {
 	ft := NewFormTokens([]byte("secret"))
 	now := time.Unix(1_700_000_000, 0).UTC()
 	token := ft.Issue(now)
-	tampered := token[:len(token)-1] + "X"
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw[len(raw)-1] ^= 1
+	tampered := base64.RawURLEncoding.EncodeToString(raw)
 	if ft.Verify(tampered, now.Add(minAge()), 5*time.Second, 2*time.Hour) {
 		t.Fatal("tampered token accepted")
 	}
@@ -359,7 +489,7 @@ func TestTemplateFuncs(t *testing.T) {
 	})
 	body := w.Body.String()
 	for _, want := range []string{
-		"2026-03-19 00:30 UTC",
+		"2026-03-19 08:30",
 		"你好…",
 		"待审",
 		"已通过",

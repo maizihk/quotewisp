@@ -2,6 +2,16 @@ import http from 'k6/http';
 import { check } from 'k6';
 import exec from 'k6/execution';
 
+const thresholds = {
+  'checks{scenario:measured}': ['rate==1'],
+  'http_req_failed{scenario:measured}': ['rate==0'],
+  'http_req_duration{scenario:measured}': ['p(95)<10'],
+  'dropped_iterations{scenario:measured}': ['count==0'],
+};
+if (__ENV.MIN_REQUESTS) {
+  thresholds['http_reqs{scenario:measured}'] = [`count>=${Number(__ENV.MIN_REQUESTS)}`];
+}
+
 export const options = {
   scenarios: {
     warmup: {
@@ -17,19 +27,14 @@ export const options = {
       exec: 'readMix', tags: { phase: __ENV.PHASE || 'steady' },
     },
   },
-  thresholds: {
-    'checks{scenario:measured}': ['rate==1'],
-    'http_req_failed{scenario:measured}': ['rate==0'],
-    'http_req_duration{scenario:measured}': ['p(95)<10'],
-    'dropped_iterations{scenario:measured}': ['count==0'],
-  },
+  thresholds,
 };
 
 const base = __ENV.BASE_URL || 'http://127.0.0.1:8080';
 const paths = [
-  '/api/v1/sentences/random',
-  '/api/v1/sentences/random?categories=short,long',
-  '/api/v1/sentences/random?min_length=5&max_length=80',
+  '/api/v1',
+  '/api/v1?categories=short,long',
+  '/api/v1?min_length=5&max_length=80',
 ];
 export function readMix() {
   const path = paths[exec.scenario.iterationInTest % paths.length];

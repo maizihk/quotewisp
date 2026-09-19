@@ -1,11 +1,10 @@
-{{define "submission_detail"}}{{template "layout" .}}{{end}}
+{{define "submission_detail"}}{{template "admin_layout" .}}{{end}}
 {{define "title"}}投稿详情 #{{.Data.Item.ID}}{{end}}
 {{define "content"}}
-{{template "admin_bar" .}}
-<h1>投稿详情 #{{.Data.Item.ID}}</h1>
+<div class="page-heading"><div><p class="eyebrow">投稿详情</p><h1>#{{.Data.Item.ID}}</h1></div><div class="heading-actions">{{if eq .Data.Item.Status 1}}<a href="/admin/submissions?status=approved">返回已通过列表</a>{{else if eq .Data.Item.Status 2}}<a href="/admin/submissions?status=rejected">返回已拒绝列表</a>{{else}}<a href="/admin/submissions">返回待审列表</a>{{end}}</div></div>
 {{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
-<dl>
-<dt>状态</dt><dd>{{submissionStatus .Data.Item.Status}}{{if .Data.Item.DuplicatePending}} <span class="badge">重复</span>{{end}}</dd>
+<dl class="detail-list">
+<dt>状态</dt><dd><span class="status-badge {{if eq .Data.Item.Status 1}}is-success{{else if eq .Data.Item.Status 2}}is-danger{{else}}is-warning{{end}}">{{submissionStatus .Data.Item.Status}}</span>{{if .Data.Item.DuplicatePending}} <span class="badge">重复</span>{{end}}</dd>
 <dt>内容</dt><dd>{{.Data.Item.Content}}</dd>
 <dt>分类</dt><dd>{{.Data.Item.CategoryName}} ({{.Data.Item.CategoryCode}})</dd>
 <dt>出处</dt><dd>{{.Data.Item.Source}}</dd>
@@ -14,13 +13,13 @@
 <dt>联系方式</dt><dd>{{.Data.Item.Contact}}</dd>
 <dt>客户端 IP</dt><dd>{{.Data.Item.ClientIP}}</dd>
 <dt>提交时间</dt><dd>{{formatTime .Data.Item.CreatedAt}}</dd>
-{{if .Data.Item.ReviewedAt}}<dt>审核时间</dt><dd>{{.Data.Item.ReviewedAt}}</dd>{{end}}
+{{if .Data.Item.ReviewedAt}}<dt>审核时间</dt><dd>{{formatTime .Data.Item.ReviewedAt}}</dd>{{end}}
 {{if .Data.Item.ReviewedByUsername}}<dt>审核人</dt><dd>{{.Data.Item.ReviewedByUsername}}</dd>{{end}}
 {{if .Data.Item.RejectReason}}<dt>拒绝原因</dt><dd>{{.Data.Item.RejectReason}}</dd>{{end}}
 {{if .Data.Item.SentenceUUID}}<dt>关联句子</dt><dd><a href="/admin/sentences/{{.Data.Item.SentenceUUID}}">{{.Data.Item.SentenceUUID}}</a></dd>{{end}}
 </dl>
 {{if eq .Data.Item.Status 0}}
-<form method="post" action="/admin/submissions/{{.Data.Item.ID}}/approve">
+<form class="admin-form content-card" method="post" action="/admin/submissions/{{.Data.Item.ID}}/approve">
 <input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
 <label>内容 <textarea name="content" rows="4" required>{{.Data.Item.Content}}</textarea></label>
 <label>分类
@@ -34,11 +33,10 @@
 <label>作者 <input name="author" value="{{.Data.Item.Author}}"></label>
 <button type="submit">通过</button>
 </form>
-<form method="post" action="/admin/submissions/{{.Data.Item.ID}}/reject">
+<form class="action-card danger-zone" method="post" action="/admin/submissions/{{.Data.Item.ID}}/reject">
 <input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
 <label>拒绝原因 <input name="reject_reason" required maxlength="255"></label>
-<button type="submit">拒绝</button>
+<button class="danger" type="submit">拒绝</button>
 </form>
 {{end}}
-<p><a href="/admin/">返回待审列表</a></p>
 {{end}}

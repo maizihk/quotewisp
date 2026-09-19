@@ -1,11 +1,11 @@
 # Go 语句 API 开发规格
 
-版本：1.3（草案）  
-状态：读 API 部分已实现并验证，见 [验收记录](acceptance.md)；1.3 新增的前台、投稿与后台见 [前台规格](web-spec.md)，尚未实现  
-修订日期：2026-09-18  
+版本：1.3\\
+状态：读 API 已实现并验证，见 [验收记录](acceptance.md)；1.3 前台、投稿与后台以实现代码和 [前台规格](web-spec.md) 为准\\
+修订日期：2026-09-19\\
 目标：独立实现一个可生产部署的纯 Go 语句 API，以及与之配套的前台站点、公开投稿和管理员后台。
 
-本文件为当前开发基线，替代 1.2 版。配套的 [数据导入格式](import-format.md) 与 [前台规格](web-spec.md) 与本文件具有相同约束力。本文中的“必须”属于验收要求，“建议”属于推荐做法。本文描述计划实现的行为，不代表代码、测试或上线验收已经完成。
+本文件为当前开发基线，替代 1.2 版。配套的 [数据导入格式](import-format.md) 与 [前台规格](web-spec.md) 与本文件具有相同约束力。本文中的“必须”属于验收要求，“建议”属于推荐做法。本文与实现、测试对齐；冲突时改代码或回改本文，禁止两套说法并存。
 
 ## 1. 项目边界
 
@@ -254,7 +254,7 @@ sentence-api import --file sentences.json
 - `down` 必须显式指定正数步数；不提供默认回退全部迁移的行为。执行前由部署方完成适当备份并检查具体 SQL。
 - 空数据库首次部署顺序为：迁移 → 导入包含分类和语句的数据文件 → 启动服务。分类也可由外部管理程序按版本协议提前创建。
 - API 账号使用读取权限；导入账号具备必要的读取、写入权限；迁移账号具备必要的 DDL 权限。每次命令通过 `MYSQL_DSN` 注入相应账号，不要求服务账号拥有 DDL 权限。
-- 首个 schema 迁移编号为 1。首版服务及导入命令只接受版本 1 且非 dirty 的数据库，启动时直接检查，不建立通用版本兼容框架。将来确有兼容多个 schema 的需求时再明确支持列表。
+- 首个 schema 迁移编号为 1。当前随包迁移最高为 4。读 API 与 import 接受版本 1、2、3 或 4 且非 dirty；`web` 只接受版本 4。启动时检查该范围，不建立通用多版本兼容框架。未知更高版本或 dirty 直接失败。
 - `migrate up` 必须允许从空库或已存在的较早迁移版本按随包 SQL 升级，不能套用服务启动时的版本检查而阻止首次建库。未知迁移版本或 dirty 状态直接失败。
 - MySQL DDL 不承诺整个迁移批次事务回滚。中断或失败可能留下部分结构和 dirty 状态；部署方按运行文档检查实际结构、修复后使用官方迁移工具纠正版本，不自动 force 或重试破坏性 DDL。
 
@@ -390,7 +390,7 @@ Authorization: Bearer <RELOAD_TOKEN>
 ### 9.2 随机语句
 
 ```http
-GET /api/v1/sentences/random
+GET /api/v1
 ```
 
 | 参数 | 类型 | 默认值 | 限制 |
@@ -733,7 +733,7 @@ sentence-api:git-<short-sha>
 
 ### 15.3 外部 MySQL 集成测试
 
-通过 `MYSQL_TEST_DSN` 连接部署方提供的专用测试数据库；当前部署验收使用 MariaDB 11.8，MySQL 8.4 兼容目标需另行验证。项目不负责创建数据库容器，CI 工作流也不定义数据库 service 容器。
+通过 `MYSQL_TEST_DSN` 连接部署方提供的专用测试数据库；当前部署验收使用 MariaDB 11.8，MySQL 8.4 兼容目标需另行验证。集成测试套件不启动数据库容器。CI `integration` job 使用外部 DSN secret，不定义数据库 service；`image` job 另启 MariaDB 11.8 只做生产镜像 smoke，不能替代外部集成门禁。
 
 测试账号必须有创建和删除测试数据库及执行迁移的权限。每个测试套件实例必须：
 
@@ -982,9 +982,9 @@ sentence-api import --file sentences.json --dry-run
 
 - 项目边界扩展：新增前台站点、公开投稿、管理员后台（含投稿审核、句子管理、分类管理、多管理员），由 `sentence-api web` 子命令在独立容器中运行，规格见 [前台规格](web-spec.md)。同一镜像、同一标签发布两个容器。读 API 的行为、账号权限和本文件其余约束不变。
 - 第 13 节"只交付 API 镜像"含义不变：仍是一个镜像，但该镜像同时提供 `web` 子命令。
-- 数据模型新增 `submissions`、`admin_users`、`admin_sessions` 三张表（迁移 `000002`），`sentences`、`categories`、`dataset_versions` 不改动。
-- `CheckSchema` 从只接受版本 1 改为只接受版本 2。发布顺序：先用 1.3 镜像替换读 API 容器，再执行迁移 `000002`，再启动 `sentence-web` 容器。1.2 镜像在迁移后无法启动，回滚需连同 `000002 down` 一起评估。
+- 数据模型新增 `submissions`、`admin_users`、`admin_sessions` 三张表（迁移 `000002`）以及 `site_settings`（迁移 `000003`），`sentences`、`categories`、`dataset_versions` 不改动。读 API 快照查询不依赖新表，因此 **1.3 读 API 与 import 接受 schema 1、2 和 3**；`sentence-api web` 与 `web admin` 要求 schema 3。
+- 滚动升级：先用 1.3 镜像替换仍运行在较早 schema 上的读 API 容器 → `migrate up` 到当前版本（读 API 继续服务）→ 启动 `sentence-web`。禁止在仅有 1.2 读 API 时执行 `000002`（1.2 只接受 schema 1）。回滚 web 后可将 schema 降回 1，1.3 读 API 仍可运行；1.2 镜像不能在 schema 2+ 上启动。站点名称、公开地址、联系方式、仓库与备案以后台设置为准，环境变量只作空库种子。
 - `sentences.status = 3`（停用）首次有写入路径：后台停用/恢复按第 6.3 节协议递增版本。
-- 数据来源决定：初始句子库来自 `hitokoto-osc/sentences-bundle`（AGPL v3），前台署名并提供完整句子库导出下载；导出格式与导入格式一致。用户投稿在条款中同意以相同条件公开。程序许可与数据许可分别声明。
+- 数据来源决定：初始句子库来自 `hitokoto-osc/sentences-bundle`（AGPL v3），`/dataset` 署名并提供完整句子库导出下载；导出格式与导入格式一致。用户投稿在条款中同意以相同条件公开。程序许可与数据许可分别声明。
 - 第 11.1 节"首版不要求 Go 内置限流"仅针对读 API；`sentence-web` 的投稿与登录必须有进程内限流，仍不引入 Redis。
 - 第 18 节"需要审核的数据应通过外部管理流程处理"中的外部管理流程即 `sentence-web`。导入命令行为不变。

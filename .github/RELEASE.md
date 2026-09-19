@@ -10,7 +10,15 @@ never bind the secret-bearing environment.
 
 The current external database gate targets MariaDB 11.8. The workflow does not
 claim MySQL 8.4 integration coverage until a separate trusted MySQL 8.4 DSN is
-configured and run. CI never starts a database service container.
+configured and run. The `integration` job uses an external DSN secret and never
+starts a database container. The `image` job starts MariaDB 11.8 only to smoke
+the production image (`web` subcommand and HTTP probes); that service is not a
+substitute for the external integration gate.
+
+Current images serve both the read API and `web` from one digest. The read API
+accepts schema versions 1–4; `web` requires 4. Upgrade by replacing every read
+API instance with the current image first, running the packaged migration to
+schema 4, and then starting the current web container.
 
 Set `IMAGE_REGISTRY`, `IMAGE_NAME`, `REGISTRY_USERNAME`, and
 `REGISTRY_PASSWORD` in the protected `release` environment. A successful

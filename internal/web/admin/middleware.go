@@ -49,6 +49,8 @@ func (h *handler) allowForPath(path string) string {
 		return "POST, OPTIONS"
 	case "/admin/password":
 		return "GET, HEAD, POST, OPTIONS"
+	case "/admin/settings":
+		return "GET, HEAD, POST, OPTIONS"
 	case "/admin/":
 		return "GET, HEAD, OPTIONS"
 	case "/admin/submissions":
@@ -75,7 +77,9 @@ func (h *handler) allowForPath(path string) string {
 		return "POST, OPTIONS"
 	case "/admin/users":
 		return "GET, HEAD, POST, OPTIONS"
-	case "/admin/users/{id}/disable", "/admin/users/{id}/enable", "/admin/users/{id}/reset-password":
+	case "/admin/users/{id}/reset-password":
+		return "GET, HEAD, POST, OPTIONS"
+	case "/admin/users/{id}/disable", "/admin/users/{id}/enable":
 		return "POST, OPTIONS"
 	default:
 		return "GET, HEAD, OPTIONS"

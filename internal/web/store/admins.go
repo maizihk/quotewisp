@@ -108,28 +108,60 @@ func (s *Store) SetAdminEnabled(ctx context.Context, id uint64, enabled bool) er
 		return errors.New("begin transaction")
 	}
 	defer tx.Rollback()
-	var curEnabled bool
-	if err = tx.QueryRowContext(ctx, "SELECT enabled FROM admin_users WHERE id = ? FOR UPDATE", id).Scan(&curEnabled); errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	} else if err != nil {
-		return errors.New("read admin")
-	}
-	if curEnabled == enabled {
-		if err = tx.Commit(); err != nil {
-			return errors.New("commit transaction")
-		}
-		return nil
-	}
 	if !enabled {
-		var enabledCount int
-		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM admin_users WHERE enabled = TRUE").Scan(&enabledCount); err != nil {
-			return errors.New("count enabled admins")
+		rows, err := tx.QueryContext(ctx, "SELECT id FROM admin_users WHERE enabled = TRUE ORDER BY id FOR UPDATE")
+		if err != nil {
+			return errors.New("lock enabled admins")
+		}
+		enabledCount := 0
+		found := false
+		for rows.Next() {
+			var eid uint64
+			if err = rows.Scan(&eid); err != nil {
+				rows.Close()
+				return errors.New("lock enabled admins")
+			}
+			enabledCount++
+			if eid == id {
+				found = true
+			}
+		}
+		if err = rows.Close(); err != nil {
+			return errors.New("lock enabled admins")
+		}
+		if err = rows.Err(); err != nil {
+			return errors.New("lock enabled admins")
+		}
+		if !found {
+			var exists int
+			if err = tx.QueryRowContext(ctx, "SELECT 1 FROM admin_users WHERE id = ?", id).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			} else if err != nil {
+				return errors.New("read admin")
+			}
+			if err = tx.Commit(); err != nil {
+				return errors.New("commit transaction")
+			}
+			return nil
 		}
 		if enabledCount <= 1 {
 			return ErrLastAdmin
 		}
 		if _, err = tx.ExecContext(ctx, "DELETE FROM admin_sessions WHERE admin_id = ?", id); err != nil {
 			return errors.New("delete admin sessions")
+		}
+	} else {
+		var curEnabled bool
+		if err = tx.QueryRowContext(ctx, "SELECT enabled FROM admin_users WHERE id = ? FOR UPDATE", id).Scan(&curEnabled); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return errors.New("read admin")
+		}
+		if curEnabled {
+			if err = tx.Commit(); err != nil {
+				return errors.New("commit transaction")
+			}
+			return nil
 		}
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE admin_users SET enabled = ? WHERE id = ?", enabled, id); err != nil {
@@ -138,19 +170,51 @@ func (s *Store) SetAdminEnabled(ctx context.Context, id uint64, enabled bool) er
 	return tx.Commit()
 }
 
-func (s *Store) SetAdminPasswordHash(ctx context.Context, id uint64, hash string) error {
-	res, err := s.DB.ExecContext(ctx, "UPDATE admin_users SET password_hash = ? WHERE id = ?", hash, id)
-	if err != nil {
-		return errors.New("update admin password")
+func (s *Store) ResetAdminPassword(ctx context.Context, id uint64, hash string, keepSession *[32]byte) error {
+	return s.resetAdminPassword(ctx, id, hash, keepSession, "")
+}
+
+func (s *Store) ChangeAdminPassword(ctx context.Context, id uint64, expectHash, hash string, keepSession *[32]byte) error {
+	if expectHash == "" {
+		return errors.New("expected password hash required")
 	}
-	n, err := res.RowsAffected()
+	return s.resetAdminPassword(ctx, id, hash, keepSession, expectHash)
+}
+
+func (s *Store) resetAdminPassword(ctx context.Context, id uint64, hash string, keepSession *[32]byte, expectHash string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return errors.New("update admin password")
+		return errors.New("begin transaction")
 	}
-	if n == 0 {
+	defer tx.Rollback()
+	var currentHash string
+	if err = tx.QueryRowContext(ctx, "SELECT password_hash FROM admin_users WHERE id = ? FOR UPDATE", id).Scan(&currentHash); errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
+	} else if err != nil {
+		return errors.New("lock admin")
+	}
+	if expectHash != "" && !sameSecret(currentHash, expectHash) {
+		return ErrStaleAuth
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE admin_users SET password_hash = ? WHERE id = ?", hash, id); err != nil {
+		return errors.New("update admin password")
+	}
+	if keepSession == nil {
+		_, err = tx.ExecContext(ctx, "DELETE FROM admin_sessions WHERE admin_id = ?", id)
+	} else {
+		_, err = tx.ExecContext(ctx, "DELETE FROM admin_sessions WHERE admin_id = ? AND token_hash <> ?", id, keepSession[:])
+	}
+	if err != nil {
+		return errors.New("delete admin sessions")
+	}
+	if err = tx.Commit(); err != nil {
+		return errors.New("commit transaction")
 	}
 	return nil
+}
+
+func (s *Store) SetAdminPasswordHash(ctx context.Context, id uint64, hash string) error {
+	return s.ResetAdminPassword(ctx, id, hash, nil)
 }
 
 func (s *Store) TouchAdminLogin(ctx context.Context, id uint64) error {

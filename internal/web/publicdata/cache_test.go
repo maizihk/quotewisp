@@ -1,9 +1,12 @@
 package publicdata_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,11 +15,12 @@ import (
 )
 
 type fakeSource struct {
-	mu       sync.Mutex
-	version  uint64
-	builds   int
-	block    chan struct{}
-	buildErr error
+	mu        sync.Mutex
+	version   uint64
+	builds    int
+	block     chan struct{}
+	buildErr  error
+	cancelErr error
 }
 
 func (f *fakeSource) BuildPublicData(ctx context.Context) (*store.PublicData, error) {
@@ -32,6 +36,9 @@ func (f *fakeSource) BuildPublicData(ctx context.Context) (*store.PublicData, er
 		select {
 		case <-block:
 		case <-ctx.Done():
+			if f.cancelErr != nil {
+				return nil, f.cancelErr
+			}
 			return nil, ctx.Err()
 		}
 	}
@@ -44,6 +51,14 @@ func (f *fakeSource) BuildPublicData(ctx context.Context) (*store.PublicData, er
 		BuiltAt:    time.Now().UTC(),
 	}, nil
 }
+
+type fakeMetrics struct {
+	built  atomic.Int64
+	failed atomic.Int64
+}
+
+func (m *fakeMetrics) ExportBuilt(uint64, int) { m.built.Add(1) }
+func (m *fakeMetrics) ExportFailed()           { m.failed.Add(1) }
 
 func (f *fakeSource) DatasetVersion(context.Context) (uint64, error) {
 	f.mu.Lock()
@@ -211,6 +226,100 @@ func TestConcurrentCurrentRace(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestRefreshStopsWithLifecycle(t *testing.T) {
+	block := make(chan struct{})
+	src := &fakeSource{version: 1, block: block, cancelErr: errors.New("read public categories")}
+	metrics := &fakeMetrics{}
+	var logs bytes.Buffer
+	cache := publicdata.New(src, slog.New(slog.NewJSONHandler(&logs, nil)), metrics, 5*time.Second)
+	if err := cache.LoadInitial(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	src.mu.Lock()
+	src.version = 2
+	src.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	cache.Bind(ctx, &wg)
+	cache.Refresh()
+	waitForBuilds(t, src, 2)
+	cancel()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not join after cancel")
+	}
+	if metrics.failed.Load() != 0 {
+		t.Fatalf("shutdown cancellation counted as failure: %d", metrics.failed.Load())
+	}
+	if bytes.Contains(logs.Bytes(), []byte(`"result":"failure"`)) {
+		t.Fatalf("shutdown cancellation logged as failure: %s", logs.String())
+	}
+	if got := cache.Current(); got == nil || got.Version != 1 {
+		t.Fatalf("shutdown cancellation replaced old snapshot: %#v", got)
+	}
+}
+
+func TestRefreshRealFailureAndTimeoutCountAsFailures(t *testing.T) {
+	t.Run("database", func(t *testing.T) {
+		src := &fakeSource{version: 1}
+		metrics := &fakeMetrics{}
+		cache := publicdata.New(src, nil, metrics, time.Second)
+		if err := cache.LoadInitial(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		before := cache.Current()
+		src.mu.Lock()
+		src.version = 2
+		src.buildErr = errors.New("db down")
+		src.mu.Unlock()
+		var wg sync.WaitGroup
+		cache.Bind(context.Background(), &wg)
+		cache.Refresh()
+		wg.Wait()
+		if metrics.failed.Load() != 1 {
+			t.Fatalf("database failure count = %d, want 1", metrics.failed.Load())
+		}
+		if cache.Current() != before {
+			t.Fatal("database failure replaced old snapshot")
+		}
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		src := &fakeSource{version: 1}
+		metrics := &fakeMetrics{}
+		var logs bytes.Buffer
+		cache := publicdata.New(src, slog.New(slog.NewJSONHandler(&logs, nil)), metrics, 10*time.Millisecond)
+		if err := cache.LoadInitial(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		before := cache.Current()
+		src.mu.Lock()
+		src.version = 2
+		src.block = make(chan struct{})
+		src.mu.Unlock()
+		var wg sync.WaitGroup
+		cache.Bind(context.Background(), &wg)
+		cache.Refresh()
+		wg.Wait()
+		if metrics.failed.Load() != 1 {
+			t.Fatalf("timeout failure count = %d, want 1", metrics.failed.Load())
+		}
+		if !bytes.Contains(logs.Bytes(), []byte(`"error_category":"timeout"`)) {
+			t.Fatalf("timeout category missing from log: %s", logs.String())
+		}
+		if cache.Current() != before {
+			t.Fatal("timeout replaced old snapshot")
+		}
+	})
 }
 
 func waitForBuilds(t *testing.T, src *fakeSource, want int) {

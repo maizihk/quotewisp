@@ -1,10 +1,9 @@
-{{define "categories_list"}}{{template "layout" .}}{{end}}
+{{define "categories_list"}}{{template "admin_layout" .}}{{end}}
 {{define "title"}}分类管理{{end}}
 {{define "content"}}
-{{template "admin_bar" .}}
-<h1>分类管理</h1>
+<div class="page-heading"><div><p class="eyebrow">内容结构</p><h1>分类管理</h1></div><div class="heading-actions"><a class="button" href="/admin/categories/new">新建分类</a></div></div>
 {{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
-<p><a href="/admin/categories/new">新建分类</a></p>
+<div class="table-shell">
 <table>
 <thead><tr><th>代码</th><th>名称</th><th>排序</th><th>状态</th><th>已发布</th><th>已停用</th><th></th></tr></thead>
 <tbody>
@@ -13,7 +12,7 @@
 <td>{{.Code}}</td>
 <td>{{.Name}}</td>
 <td>{{.SortOrder}}</td>
-<td>{{if .Enabled}}启用{{else}}停用{{end}}</td>
+<td><span class="status-badge {{if .Enabled}}is-success{{else}}is-muted{{end}}">{{if .Enabled}}启用{{else}}停用{{end}}</span></td>
 <td>{{.PublishedCount}}</td>
 <td>{{.DisabledCount}}</td>
 <td><a href="/admin/categories/{{.Code}}">详情</a></td>
@@ -23,4 +22,5 @@
 {{end}}
 </tbody>
 </table>
+</div>
 {{end}}

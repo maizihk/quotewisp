@@ -3,4 +3,5 @@
 *.test
 .env
 .env.*
+.cache/
 *.prof

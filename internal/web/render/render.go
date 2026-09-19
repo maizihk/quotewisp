@@ -7,8 +7,10 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"sentence-api/internal/httpmw"
@@ -21,13 +23,33 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 type Site struct {
-	Name, Contact, RepoURL, Version string
+	Name, EnglishName, Slogan, Contact, RepoURL, Version, AssetRev string
+	PublicOrigin, BeianText, BeianURL                              string
+}
+
+func (s Site) DisplayName() string {
+	if s.EnglishName == "" {
+		return s.Name
+	}
+	return s.Name + " " + s.EnglishName
+}
+
+func (s Site) HomeTitle() string {
+	title := s.DisplayName()
+	if s.Slogan != "" {
+		title += " · " + s.Slogan
+	}
+	return title
 }
 
 type View struct {
-	Site      Site
-	RequestID string
-	Data      any
+	Site        Site
+	RequestID   string
+	Path        string
+	Query       string
+	Page        string
+	TitleSuffix string
+	Data        any
 }
 
 type errorViewData struct {
@@ -38,8 +60,10 @@ type errorViewData struct {
 }
 
 type Renderer struct {
-	site Site
-	base *template.Template
+	mu            sync.RWMutex
+	site          Site
+	base          *template.Template
+	errorTemplate *template.Template
 }
 
 func New(site Site) (*Renderer, error) {
@@ -47,7 +71,35 @@ func New(site Site) (*Renderer, error) {
 	if _, err := base.ParseFS(templateFS, "templates/layout.html", "templates/error.html"); err != nil {
 		return nil, err
 	}
-	return &Renderer{site: site, base: base}, nil
+	errorTemplate, err := base.Clone()
+	if err != nil {
+		return nil, err
+	}
+	return &Renderer{site: site, base: base, errorTemplate: errorTemplate}, nil
+}
+
+func (r *Renderer) Site() Site {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.site
+}
+
+func (r *Renderer) ReplaceSite(site Site) {
+	r.mu.Lock()
+	r.site = site
+	r.mu.Unlock()
+}
+
+func (s Site) Overlay(name, englishName, slogan, contact, publicOrigin, repoURL, beianText, beianURL string) Site {
+	s.Name = name
+	s.EnglishName = englishName
+	s.Slogan = slogan
+	s.Contact = contact
+	s.PublicOrigin = publicOrigin
+	s.RepoURL = repoURL
+	s.BeianText = beianText
+	s.BeianURL = beianURL
+	return s
 }
 
 func (r *Renderer) Pages(fsys fs.FS, patterns ...string) (*template.Template, error) {
@@ -59,10 +111,18 @@ func (r *Renderer) Pages(fsys fs.FS, patterns ...string) (*template.Template, er
 }
 
 func (r *Renderer) HTML(w http.ResponseWriter, req *http.Request, t *template.Template, name string, status int, data any) {
+	site := r.Site()
 	view := View{
-		Site:      r.site,
-		RequestID: httpmw.RequestIDFrom(req.Context()),
-		Data:      data,
+		Site:        site,
+		RequestID:   httpmw.RequestIDFrom(req.Context()),
+		Path:        req.URL.Path,
+		Query:       req.URL.RawQuery,
+		Page:        name,
+		TitleSuffix: " · " + site.DisplayName(),
+		Data:        data,
+	}
+	if name == "index" {
+		view.TitleSuffix = ""
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, name, view); err != nil {
@@ -84,9 +144,12 @@ func (r *Renderer) Error(w http.ResponseWriter, req *http.Request, status int, c
 		writeProblem(w, req, status, title, code, detail)
 		return
 	}
+	site := r.Site()
 	view := View{
-		Site:      r.site,
-		RequestID: httpmw.RequestIDFrom(req.Context()),
+		Site:        site,
+		RequestID:   httpmw.RequestIDFrom(req.Context()),
+		Path:        req.URL.Path,
+		TitleSuffix: " · " + site.DisplayName(),
 		Data: errorViewData{
 			Status: status,
 			Title:  title,
@@ -95,7 +158,7 @@ func (r *Renderer) Error(w http.ResponseWriter, req *http.Request, status int, c
 		},
 	}
 	var buf bytes.Buffer
-	if err := r.base.ExecuteTemplate(&buf, "error", view); err != nil {
+	if err := r.errorTemplate.ExecuteTemplate(&buf, "error", view); err != nil {
 		writeProblem(w, req, http.StatusInternalServerError, "内部错误", "internal-error", "错误页面渲染失败")
 		return
 	}
@@ -199,9 +262,7 @@ func prefersJSON(req *http.Request) bool {
 
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		"formatTime": func(t time.Time) string {
-			return t.UTC().Format("2006-01-02 15:04") + " UTC"
-		},
+		"formatTime": formatDisplayTime,
 		"truncate": func(n int, s string) string {
 			if n <= 0 {
 				return "…"
@@ -234,5 +295,59 @@ func templateFuncs() template.FuncMap {
 				return "未知"
 			}
 		},
+		"navActive": navActive,
+	}
+}
+
+var displayLoc = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("CST", 8*3600)
+	}
+	return loc
+}()
+
+func formatDisplayTime(v any) string {
+	var t time.Time
+	switch x := v.(type) {
+	case time.Time:
+		t = x
+	case *time.Time:
+		if x == nil {
+			return ""
+		}
+		t = *x
+	default:
+		return ""
+	}
+	if t.IsZero() {
+		return ""
+	}
+	return t.In(displayLoc).Format("2006-01-02 15:04")
+}
+
+func navActive(v View, href string) bool {
+	path := v.Path
+	q, _ := url.ParseQuery(v.Query)
+	status := q.Get("status")
+	switch href {
+	case "/admin/", "/admin":
+		return path == "/admin/" || path == "/admin"
+	case "/admin/submissions":
+		return path == "/admin/submissions" && (status == "" || status == "pending")
+	case "/admin/submissions?status=approved":
+		return path == "/admin/submissions" && (status == "approved" || status == "rejected")
+	case "/admin/sentences":
+		return strings.HasPrefix(path, "/admin/sentences")
+	case "/admin/categories":
+		return strings.HasPrefix(path, "/admin/categories")
+	case "/admin/users":
+		return strings.HasPrefix(path, "/admin/users")
+	case "/admin/password":
+		return path == "/admin/password"
+	case "/admin/settings":
+		return path == "/admin/settings"
+	default:
+		return path == href
 	}
 }

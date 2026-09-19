@@ -1,0 +1,37 @@
+{{define "admin_layout"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{template "title" .}} · {{.Site.DisplayName}} 后台</title>
+<link rel="stylesheet" href="/static/admin.css{{if .Site.AssetRev}}?v={{.Site.AssetRev}}{{end}}">
+<script src="/static/theme.js{{if .Site.AssetRev}}?v={{.Site.AssetRev}}{{end}}"></script>
+</head>
+<body class="admin-body">
+<div class="admin-app">
+{{template "admin_bar" .}}
+<div class="admin-main">
+<header class="admin-top">
+<p class="admin-top-title">{{template "title" .}}</p>
+<div class="admin-top-user">
+<button type="button" class="theme-toggle" data-theme-toggle aria-label="切换外观">
+<svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>
+<svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/></svg>
+</button>
+<span class="admin-username">{{.Data.Username}}</span>
+<a href="/admin/password">修改密码</a>
+<form method="post" action="/admin/logout">
+<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
+<button type="submit">退出</button>
+</form>
+</div>
+</header>
+<main class="admin-content">
+{{template "content" .}}
+</main>
+</div>
+</div>
+</body>
+</html>
+{{end}}

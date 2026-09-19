@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,8 +35,11 @@ func (m *testMetrics) Review(string, string)         { m.reviews.Add(1) }
 func (m *testMetrics) SentenceChange(string, string) { m.sentences.Add(1) }
 func (m *testMetrics) CategoryChange(string, string) {}
 
+var testFormTokens = render.NewFormTokens([]byte("01234567890123456789012345678901"))
+
 type testEnv struct {
 	store    *store.Store
+	renderer *render.Renderer
 	handler  http.Handler
 	client   *http.Client
 	metrics  *testMetrics
@@ -64,12 +68,13 @@ func setupEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	metrics := &testMetrics{}
-	env := &testEnv{store: st, metrics: metrics, adminID: adminID}
+	env := &testEnv{store: st, renderer: renderer, metrics: metrics, adminID: adminID}
 	h, err := admin.New(admin.Deps{
 		Store:        st,
 		Renderer:     renderer,
 		Metrics:      metrics,
 		Logins:       auth.NewLoginLimiter(10, 5, 15*time.Minute, 100000),
+		Tokens:       testFormTokens,
 		CookieSecure: false,
 		OnChange:     func() { env.onChange.Add(1) },
 	})
@@ -114,11 +119,35 @@ func (e *testEnv) do(t *testing.T, method, path string, body url.Values, headers
 	return resp
 }
 
+func formTokenFromPage(t *testing.T, body string) string {
+	t.Helper()
+	const marker = `name="form_token" value="`
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatal("form token not found")
+	}
+	rest := body[i+len(marker):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatal("form token malformed")
+	}
+	return rest[:j]
+}
+
+func (e *testEnv) loginFormToken(t *testing.T) string {
+	t.Helper()
+	page := e.do(t, http.MethodGet, "/admin/login", nil, nil)
+	body, _ := io.ReadAll(page.Body)
+	return formTokenFromPage(t, string(body))
+}
+
 func (e *testEnv) login(t *testing.T) {
 	t.Helper()
+	token := e.loginFormToken(t)
 	resp := e.do(t, http.MethodPost, "/admin/login", url.Values{
-		"username": {"admin1"},
-		"password": {"password123"},
+		"form_token": {token},
+		"username":   {"admin1"},
+		"password":   {"password123"},
 	}, nil)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("login status=%d", resp.StatusCode)
@@ -163,7 +192,10 @@ func TestRouteName(t *testing.T) {
 		{"/admin/sentences/550e8400-e29b-41d4-a716-446655440000", "/admin/sentences/{uuid}"},
 		{"/admin/categories/original", "/admin/categories/{code}"},
 		{"/admin/users/1/disable", "/admin/users/{id}/disable"},
+		{"/admin/users/1/reset-password", "/admin/users/{id}/reset-password"},
+		{"/admin/settings", "/admin/settings"},
 		{"/admin", "/admin/"},
+		{"/admin/sentences/a", "unmatched"},
 		{"/admin/unknown", "unmatched"},
 		{"/other", "unmatched"},
 	}
@@ -171,6 +203,86 @@ func TestRouteName(t *testing.T) {
 		if got := admin.RouteName(tt.path); got != tt.want {
 			t.Fatalf("RouteName(%q)=%q want %q", tt.path, got, tt.want)
 		}
+	}
+}
+
+func TestUserResetPasswordPageAndSelfReset(t *testing.T) {
+	env := setupEnv(t)
+	ctx := context.Background()
+	hash, err := auth.HashPassword("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := env.store.CreateAdmin(ctx, "admin2", hash, &env.adminID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/admin/users/" + u64(id) + "/reset-password"
+	resp := env.do(t, http.MethodGet, path, nil, nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/login" {
+		t.Fatalf("unauthenticated status=%d location=%q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	env.login(t)
+	for _, badPath := range []string{"/admin/users/not-a-number/reset-password", "/admin/users/999999/reset-password"} {
+		resp = env.do(t, http.MethodGet, badPath, nil, nil)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s status=%d", badPath, resp.StatusCode)
+		}
+	}
+	resp = env.do(t, http.MethodGet, path, nil, nil)
+	body := readBody(resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "admin2") || !strings.Contains(body, "ID "+u64(id)) || !strings.Contains(body, "现有登录会话将失效") {
+		t.Fatalf("reset page status=%d body=%s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, hash) || strings.Contains(body, `value="password123"`) {
+		t.Fatal("reset page exposed password material")
+	}
+	csrf := csrfFromPage(t, body)
+	resp = env.do(t, http.MethodPost, path, url.Values{
+		"password": {"new-password-1"}, "password_confirm": {"different-password"}, "csrf_token": {csrf},
+	}, nil)
+	body = readBody(resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "两次输入的密码不一致") || strings.Contains(body, "new-password-1") {
+		t.Fatalf("mismatch status=%d body=%s", resp.StatusCode, body)
+	}
+	resp = env.do(t, http.MethodPost, path, url.Values{
+		"password": {"new-password-1"}, "password_confirm": {"new-password-1"},
+	}, nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("missing CSRF status=%d", resp.StatusCode)
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.client.Jar = jar
+	token := env.loginFormToken(t)
+	resp = env.do(t, http.MethodPost, "/admin/login", url.Values{
+		"form_token": {token}, "username": {"admin2"}, "password": {"password123"},
+	}, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("admin2 login status=%d", resp.StatusCode)
+	}
+	resp = env.do(t, http.MethodGet, path, nil, nil)
+	csrf = csrfFromPage(t, readBody(resp))
+	resp = env.do(t, http.MethodPost, path, url.Values{
+		"csrf_token": {csrf}, "password": {"new-password-2"}, "password_confirm": {"new-password-2"},
+	}, nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/users" {
+		t.Fatalf("success status=%d location=%q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp = env.do(t, http.MethodGet, "/admin/users", nil, nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/login" {
+		t.Fatalf("self-reset session remained valid: status=%d location=%q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	got, err := env.store.GetAdminByID(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := auth.VerifyPassword(got.PasswordHash, "new-password-2")
+	if err != nil || !ok {
+		t.Fatalf("new password rejected ok=%t err=%v", ok, err)
 	}
 }
 
@@ -188,17 +300,21 @@ func TestUnauthenticatedRedirect(t *testing.T) {
 func TestLoginWrongPasswordAndRateLimit(t *testing.T) {
 	env := setupEnv(t)
 	for i := 0; i < 5; i++ {
+		token := env.loginFormToken(t)
 		resp := env.do(t, http.MethodPost, "/admin/login", url.Values{
-			"username": {"admin1"},
-			"password": {"wrongpass"},
+			"form_token": {token},
+			"username":   {"admin1"},
+			"password":   {"wrongpass"},
 		}, nil)
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("attempt %d status=%d", i+1, resp.StatusCode)
 		}
 	}
+	token := env.loginFormToken(t)
 	resp := env.do(t, http.MethodPost, "/admin/login", url.Values{
-		"username": {"admin1"},
-		"password": {"wrongpass"},
+		"form_token": {token},
+		"username":   {"admin1"},
+		"password":   {"wrongpass"},
 	}, nil)
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("rate limit status=%d", resp.StatusCode)
@@ -214,13 +330,20 @@ func TestLoginSuccessCookie(t *testing.T) {
 	secureHandler, err := admin.New(admin.Deps{
 		Store: env.store, Renderer: renderer, CookieSecure: true,
 		Logins: auth.NewLoginLimiter(10, 5, 15*time.Minute, 100000),
+		Tokens: testFormTokens,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	getReq := httptest.NewRequest(http.MethodGet, "/admin/login", nil)
+	getRec := httptest.NewRecorder()
+	secureHandler.ServeHTTP(getRec, getReq)
+	getBody, _ := io.ReadAll(getRec.Result().Body)
+	token := formTokenFromPage(t, string(getBody))
 	req := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(url.Values{
-		"username": {"admin1"},
-		"password": {"password123"},
+		"form_token": {token},
+		"username":   {"admin1"},
+		"password":   {"password123"},
 	}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -253,6 +376,46 @@ func TestCSRFRequired(t *testing.T) {
 	resp := env.do(t, http.MethodPost, "/admin/logout", url.Values{}, nil)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status=%d", resp.StatusCode)
+	}
+}
+
+func TestLoginFormTokenRequired(t *testing.T) {
+	env := setupEnv(t)
+	resp := env.do(t, http.MethodPost, "/admin/login", url.Values{
+		"username": {"admin1"},
+		"password": {"password123"},
+	}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing token status=%d", resp.StatusCode)
+	}
+}
+
+func TestLoginCrossSiteDenied(t *testing.T) {
+	env := setupEnv(t)
+	token := env.loginFormToken(t)
+	resp := env.do(t, http.MethodPost, "/admin/login", url.Values{
+		"form_token": {token},
+		"username":   {"admin1"},
+		"password":   {"password123"},
+	}, map[string]string{"Sec-Fetch-Site": "cross-site"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("cross-site login status=%d", resp.StatusCode)
+	}
+}
+
+func TestSentenceCreateRequiresSourceOrAuthor(t *testing.T) {
+	env := setupEnv(t)
+	env.login(t)
+	page := env.do(t, http.MethodGet, "/admin/sentences/new", nil, nil)
+	body, _ := io.ReadAll(page.Body)
+	token := csrfFromPage(t, string(body))
+	resp := env.do(t, http.MethodPost, "/admin/sentences", url.Values{
+		"csrf_token": {token},
+		"content":    {"后台新增句子"},
+		"category":   {"original"},
+	}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("create without source/author status=%d body=%s", resp.StatusCode, readBody(resp))
 	}
 }
 
@@ -452,9 +615,11 @@ func TestDisableLastAdmin(t *testing.T) {
 	if err := env.store.SetAdminEnabled(ctx, id2, true); err != nil {
 		t.Fatal(err)
 	}
+	token = env.loginFormToken(t)
 	resp = env.do(t, http.MethodPost, "/admin/login", url.Values{
-		"username": {"admin2"},
-		"password": {"password123"},
+		"form_token": {token},
+		"username":   {"admin2"},
+		"password":   {"password123"},
 	}, nil)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("login admin2 status=%d", resp.StatusCode)
@@ -504,6 +669,162 @@ func TestLogout(t *testing.T) {
 	resp = env.do(t, http.MethodGet, "/admin/", nil, nil)
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/login" {
 		t.Fatalf("after logout status=%d loc=%q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+func TestAdminLoginUsesDedicatedShell(t *testing.T) {
+	env := setupEnv(t)
+	resp := env.do(t, http.MethodGet, "/admin/login", nil, nil)
+	body, _ := io.ReadAll(resp.Body)
+	s := string(body)
+	if !strings.Contains(s, `href="/static/admin.css"`) || !strings.Contains(s, "admin-login-card") || !strings.Contains(s, `src="/static/theme.js"`) {
+		t.Fatalf("login missing admin shell:\n%s", s)
+	}
+	for _, leak := range []string{`href="/docs"`, "接口文档", `href="/submit"`, "hitokoto-osc"} {
+		if strings.Contains(s, leak) {
+			t.Fatalf("login leaked public chrome %q", leak)
+		}
+	}
+}
+
+func TestAdminHomeUsesSidebar(t *testing.T) {
+	env := setupEnv(t)
+	env.login(t)
+	resp := env.do(t, http.MethodGet, "/admin/", nil, nil)
+	body, _ := io.ReadAll(resp.Body)
+	s := string(body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("overview status=%d body=%s", resp.StatusCode, s)
+	}
+	for _, want := range []string{`class="admin-app"`, "概况", "已发布句子", "读接口调用", `href="/admin/submissions"`, `href="/admin/sentences"`, `href="/admin/settings"`, "admin1", `href="/static/admin.css"`, `data-theme-toggle`} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q in:\n%s", want, s)
+		}
+	}
+	for _, leak := range []string{"hitokoto-osc", `href="/docs"`, `href="/submit"`} {
+		if strings.Contains(s, leak) {
+			t.Fatalf("overview leaked public chrome %q", leak)
+		}
+	}
+	pending := env.do(t, http.MethodGet, "/admin/submissions", nil, nil)
+	pbody, _ := io.ReadAll(pending.Body)
+	if pending.StatusCode != http.StatusOK || !strings.Contains(string(pbody), "待审投稿") {
+		t.Fatalf("pending status=%d body=%s", pending.StatusCode, pbody)
+	}
+}
+
+func TestSiteSettingsSave(t *testing.T) {
+	env := setupEnv(t)
+	resp := env.do(t, http.MethodGet, "/admin/settings", nil, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("unauth status=%d", resp.StatusCode)
+	}
+	env.login(t)
+	page := env.do(t, http.MethodGet, "/admin/settings", nil, nil)
+	body, _ := io.ReadAll(page.Body)
+	s := string(body)
+	if page.StatusCode != http.StatusOK {
+		t.Fatalf("get status=%d body=%s", page.StatusCode, s)
+	}
+	if !strings.Contains(s, "站点设置") || !strings.Contains(s, `name="site_name"`) {
+		t.Fatalf("missing settings form: %s", s)
+	}
+	token := csrfFromPage(t, s)
+	saved := env.do(t, http.MethodPost, "/admin/settings", url.Values{
+		"csrf_token":    {token},
+		"site_name":     {"测试站"},
+		"english_name":  {"Test Site"},
+		"slogan":        {"每日一句"},
+		"contact":       {"ops@example.com"},
+		"public_origin": {"https://example.com/"},
+		"repo_url":      {"https://github.com/x/y"},
+		"beian_text":    {"京ICP备1号"},
+		"beian_url":     {"https://www.beian.gov.cn/portal/registerSystemInfo?recordcode=1"},
+	}, nil)
+	if saved.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save status=%d", saved.StatusCode)
+	}
+	got, err := env.store.GetSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "测试站" || got.EnglishName != "Test Site" || got.Slogan != "每日一句" || got.Contact != "ops@example.com" || got.PublicOrigin != "https://example.com" || got.BeianText != "京ICP备1号" {
+		t.Fatalf("stored=%+v", got)
+	}
+	again := env.do(t, http.MethodGet, "/admin/settings", nil, nil)
+	againBody, _ := io.ReadAll(again.Body)
+	out := string(againBody)
+	if !strings.Contains(out, "测试站") || !strings.Contains(out, "Test Site") || !strings.Contains(out, "每日一句") || !strings.Contains(out, "ops@example.com") || !strings.Contains(out, "京ICP备1号") {
+		t.Fatalf("live site not updated: %s", out)
+	}
+	bad := env.do(t, http.MethodPost, "/admin/settings", url.Values{
+		"csrf_token": {csrfFromPage(t, out)},
+		"site_name":  {"测试站"},
+		"contact":    {"ops@example.com"},
+		"beian_url":  {"https://beian.miit.gov.cn/"},
+	}, nil)
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid save status=%d", bad.StatusCode)
+	}
+	if live := env.renderer.Site(); live.Name != "测试站" || live.Contact != "ops@example.com" {
+		t.Fatalf("invalid save changed live site: %+v", live)
+	}
+
+	afterBad := env.do(t, http.MethodPost, "/admin/settings", url.Values{
+		"csrf_token": {csrfFromPage(t, out)},
+		"site_name":  {"锁已释放"},
+		"contact":    {"after@example.com"},
+	}, nil)
+	if afterBad.StatusCode != http.StatusSeeOther {
+		t.Fatalf("valid save after invalid status=%d", afterBad.StatusCode)
+	}
+}
+
+func TestConcurrentSiteSettingsSaveKeepsDatabaseAndRendererTogether(t *testing.T) {
+	env := setupEnv(t)
+	env.login(t)
+	page := env.do(t, http.MethodGet, "/admin/settings", nil, nil)
+	token := csrfFromPage(t, readBody(page))
+
+	const saves = 24
+	start := make(chan struct{})
+	errCh := make(chan string, saves)
+	var wg sync.WaitGroup
+	for i := 0; i < saves; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			name := "并发站点-" + strconv.Itoa(i)
+			contact := "ops-" + strconv.Itoa(i) + "@example.com"
+			resp := env.do(t, http.MethodPost, "/admin/settings", url.Values{
+				"csrf_token": {token},
+				"site_name":  {name},
+				"contact":    {contact},
+			}, nil)
+			if resp.StatusCode != http.StatusSeeOther {
+				errCh <- "status=" + strconv.Itoa(resp.StatusCode)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+
+	stored, err := env.store.GetSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := env.renderer.Site()
+	if live.Name != stored.Name || live.Contact != stored.Contact ||
+		live.EnglishName != stored.EnglishName || live.Slogan != stored.Slogan ||
+		live.PublicOrigin != stored.PublicOrigin || live.RepoURL != stored.RepoURL ||
+		live.BeianText != stored.BeianText || live.BeianURL != stored.BeianURL {
+		t.Fatalf("database and renderer diverged: stored=%+v live=%+v", stored, live)
 	}
 }
 

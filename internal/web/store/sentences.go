@@ -112,7 +112,7 @@ func (s *Store) GetSentence(ctx context.Context, uuid string) (Sentence, error) 
 func (s *Store) CreateSentence(ctx context.Context, f SentenceFields) (string, error) {
 	var outUUID string
 	err := s.withVersionTx(ctx, func(tx *sql.Tx) (bool, error) {
-		if err := ValidateSentenceFields(f.Content, f.Source, f.Author, 0); err != nil {
+		if err := ValidateWebSentenceFields(f.Content, f.Source, f.Author, 0); err != nil {
 			return false, err
 		}
 		cat, err := lookupCategory(ctx, tx, f.CategoryCode)
@@ -165,7 +165,7 @@ func (s *Store) UpdateSentence(ctx context.Context, uuid string, f SentenceField
 		if err != nil {
 			return false, errors.New("read sentence")
 		}
-		if err = ValidateSentenceFields(f.Content, f.Source, f.Author, 0); err != nil {
+		if err = ValidateWebSentenceFields(f.Content, f.Source, f.Author, 0); err != nil {
 			return false, err
 		}
 		cat, err := lookupCategory(ctx, tx, f.CategoryCode)

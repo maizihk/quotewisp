@@ -59,6 +59,76 @@ func TestMetricsBoundLabelsAndRuntime(t *testing.T) {
 	}
 }
 
+func TestWebMetricsBoundedAndOptional(t *testing.T) {
+	read := NewMetrics()
+	var readBuf bytes.Buffer
+	read.WritePrometheus(&readBuf)
+	if strings.Contains(readBuf.String(), "web_submissions_total") {
+		t.Fatal("read API metrics must not include web families")
+	}
+
+	web := NewMetrics()
+	web.EnableWeb()
+	web.WebSubmission("accepted")
+	web.WebSubmission("bogus")
+	web.WebAdminLogin("success")
+	web.WebReview("approve", "success")
+	web.WebSentenceChange("create", "duplicate")
+	web.WebCategoryChange("disable", "error")
+	web.WebPublicDataBuilt("success", 42, 1000)
+	web.WebPublicDataBuilt("failure", 0, 0)
+
+	var webBuf bytes.Buffer
+	web.WritePrometheus(&webBuf)
+	s := webBuf.String()
+	if !strings.Contains(s, `web_submissions_total{result="accepted"} 1`) {
+		t.Fatalf("accepted counter missing: %s", s)
+	}
+	if !strings.Contains(s, `web_submissions_total{result="other"} 1`) {
+		t.Fatalf("unknown submission mapped to other: %s", s)
+	}
+	if !strings.Contains(s, `web_admin_login_total{result="success"} 1`) {
+		t.Fatalf("login counter missing: %s", s)
+	}
+	if !strings.Contains(s, `web_reviews_total{action="approve",result="success"} 1`) {
+		t.Fatalf("review counter missing: %s", s)
+	}
+	if !strings.Contains(s, "web_public_data_version 42") {
+		t.Fatalf("public data version missing: %s", s)
+	}
+	if !strings.Contains(s, "web_public_data_export_bytes 1000") {
+		t.Fatalf("public data bytes missing: %s", s)
+	}
+	if !strings.Contains(s, `web_public_data_builds_total{result="success"} 1`) {
+		t.Fatalf("build success counter missing: %s", s)
+	}
+	if !strings.Contains(s, `web_public_data_builds_total{result="failure"} 1`) {
+		t.Fatalf("build failure counter missing: %s", s)
+	}
+	if !strings.Contains(s, "web_pending_submissions 0") {
+		t.Fatalf("pending gauge should start at zero: %s", s)
+	}
+	web.SetWebPendingSubmissions(7)
+	web.AddWebRetentionRows("deleted", 3)
+	web.AddWebRetentionRows("redacted", 2)
+	web.AddWebRetentionRows("bogus", 99)
+	var webBuf2 bytes.Buffer
+	web.WritePrometheus(&webBuf2)
+	s2 := webBuf2.String()
+	if !strings.Contains(s2, "web_pending_submissions 7") {
+		t.Fatalf("pending gauge missing: %s", s2)
+	}
+	if !strings.Contains(s2, `web_retention_rows_total{action="deleted"} 3`) {
+		t.Fatalf("retention deleted counter missing: %s", s2)
+	}
+	if !strings.Contains(s2, `web_retention_rows_total{action="redacted"} 2`) {
+		t.Fatalf("retention redacted counter missing: %s", s2)
+	}
+	if strings.Contains(s2, `action="other"`) {
+		t.Fatalf("unknown retention action leaked: %s", s2)
+	}
+}
+
 func TestLoggerUsesUTC(t *testing.T) {
 	var b bytes.Buffer
 	l, e := NewJSONLogger(&b, "info")

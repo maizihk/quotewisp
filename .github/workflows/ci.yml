@@ -36,14 +36,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [FuzzQueryParameters, FuzzUUIDPath, FuzzCategories, FuzzProblem]
+        target: [FuzzQueryParameters, FuzzUUIDPath, FuzzCategories, FuzzProblem, FuzzValidateSubmission, FuzzAdminUUIDPath]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
         with:
           go-version: '1.27.1'
           cache: true
-      - run: go test ./internal/httpapi -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=30s
+      - name: Run fuzz target
+        run: |
+          case '${{ matrix.target }}' in
+            FuzzValidateSubmission) pkg=./internal/web/public ;;
+            FuzzAdminUUIDPath) pkg=./internal/web/admin ;;
+            *) pkg=./internal/httpapi ;;
+          esac
+          go test "$pkg" -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=30s
 
   integration:
     name: External MariaDB 11.8 integration
@@ -62,7 +69,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: test -n "$MYSQL_TEST_DSN"
       - name: Run integration suite
-        run: go test -count=1 ./internal/integration
+        run: go test -count=1 -race ./...
 
   integration-pr:
     name: Integration suite without credentials
@@ -82,6 +89,21 @@ jobs:
   image:
     name: Build production image
     runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: sentence_api
+          MARIADB_USER: test
+          MARIADB_PASSWORD: test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -103,6 +125,37 @@ jobs:
           status=$?
           set -e
           test "$status" -eq 1
+          set +e
+          docker run --rm --read-only --network none sentence-api:ci web
+          web_status=$?
+          set -e
+          test "$web_status" -eq 1
+      - name: Web subcommand help
+        run: docker run --rm sentence-api:ci web admin --help >/dev/null
+      - name: Web container smoke
+        env:
+          MYSQL_DSN: test:test@tcp(127.0.0.1:3306)/sentence_api?parseTime=true&multiStatements=true&charset=utf8mb4
+          WEB_SECRET_KEY: 01234567890123456789012345678901
+          SITE_CONTACT: ci@example.com
+        run: |
+          docker run --rm --network host -e MYSQL_DSN="$MYSQL_DSN" sentence-api:ci migrate up
+          printf 'ci-password-123\n' | docker run --rm -i --network host -e MYSQL_DSN="$MYSQL_DSN" sentence-api:ci web admin create --username ciadmin --password-stdin
+          cid=$(docker run -d --network host \
+            -e MYSQL_DSN="$MYSQL_DSN" \
+            -e WEB_SECRET_KEY="$WEB_SECRET_KEY" \
+            -e SITE_CONTACT="$SITE_CONTACT" \
+            -e COOKIE_SECURE=false \
+            -e HTTP_ADDR=127.0.0.1:18081 \
+            sentence-api:ci web)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18081/readyz >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:18081/readyz >/dev/null
+          BASE=http://127.0.0.1:18081 bash scripts/smoke-web.sh
 
   publish:
     name: Publish protected release tag

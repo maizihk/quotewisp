@@ -96,6 +96,10 @@ func (h *handler) postSentenceCreate(w http.ResponseWriter, r *http.Request) {
 		Source:   r.FormValue("source"),
 		Author:   r.FormValue("author"),
 	}
+	if err := store.ValidateWebSentenceFields(fields.Content, fields.Source, fields.Author, 0); err != nil {
+		h.handleSentenceWriteError(w, r, "create", nil, fields, err)
+		return
+	}
 	uuid, err := h.store.CreateSentence(r.Context(), store.SentenceFields{
 		Content: fields.Content, CategoryCode: fields.Category,
 		Source: fields.Source, Author: fields.Author,
@@ -147,6 +151,10 @@ func (h *handler) postSentenceEdit(w http.ResponseWriter, r *http.Request) {
 		Category: r.FormValue("category"),
 		Source:   r.FormValue("source"),
 		Author:   r.FormValue("author"),
+	}
+	if err := store.ValidateWebSentenceFields(fields.Content, fields.Source, fields.Author, 0); err != nil {
+		h.handleSentenceWriteError(w, r, "edit", &uuid, fields, err)
+		return
 	}
 	err := h.store.UpdateSentence(r.Context(), uuid, store.SentenceFields{
 		Content: fields.Content, CategoryCode: fields.Category,

@@ -1,9 +1,11 @@
-{{define "login"}}{{template "layout" .}}{{end}}
+{{define "login"}}{{template "admin_login_layout" .}}{{end}}
 {{define "title"}}管理员登录{{end}}
 {{define "content"}}
 <h1>管理员登录</h1>
+<p class="meta">登录以审核投稿并维护站点内容。</p>
 {{if .Data.Error}}<p class="flash error">{{.Data.Error}}</p>{{end}}
-<form method="post" action="/admin/login">
+<form class="admin-form" method="post" action="/admin/login">
+<input type="hidden" name="form_token" value="{{.Data.FormToken}}">
 <label>用户名 <input name="username" required autocomplete="username"></label>
 <label>密码 <input name="password" type="password" required autocomplete="current-password"></label>
 <button type="submit">登录</button>

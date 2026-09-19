@@ -73,7 +73,7 @@ func TestRandomValidation(t *testing.T) {
 	}{{"", 200}, {"?categories=", 400}, {"?categories=a,,b", 400}, {"?categories=A", 400}, {"?categories=nope", 400}, {"?min_length=0&max_length=0", 404}, {"?min_length=1000&max_length=1000", 404}, {"?min_length=-1", 400}, {"?min_length=%2B1", 400}, {"?min_length=", 400}, {"?min_length=x", 400}, {"?min_length=999999999999999999999", 400}, {"?min_length=50", 400}, {"?min_length=1&min_length=2", 400}, {"?wat=1", 400}, {"?categories=a%ZZ", 400}, {"?callback=x", 400}}
 	for _, tt := range tests {
 		t.Run(tt.q, func(t *testing.T) {
-			w := request(h, "GET", "/api/v1/sentences/random"+tt.q, nil)
+			w := request(h, "GET", "/api/v1"+tt.q, nil)
 			if w.Code != tt.want {
 				t.Fatalf("got %d body %s", w.Code, w.Body.String())
 			}
@@ -88,7 +88,7 @@ func TestRandomCandidateBoundariesAndSingleSnapshotRead(t *testing.T) {
 	for off, want := range []string{"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"} {
 		p := &provider{s: fixture(t)}
 		h := handler(t, p, func(o *Options) { o.RandomOffset = func(uint64) uint64 { return uint64(off) } })
-		w := request(h, "GET", "/api/v1/sentences/random?categories=a,b&max_length=2", nil)
+		w := request(h, "GET", "/api/v1?categories=a,b&max_length=2", nil)
 		if w.Code != 200 {
 			t.Fatal(w.Code)
 		}
@@ -166,7 +166,7 @@ func TestUUIDCategoriesHEADAndMethods(t *testing.T) {
 
 func TestQueryLimitBodyAndProblem(t *testing.T) {
 	h := handler(t, &provider{s: fixture(t)}, nil)
-	w := request(h, "GET", "/api/v1/sentences/random?x="+strings.Repeat("a", 4096), nil)
+	w := request(h, "GET", "/api/v1?x="+strings.Repeat("a", 4096), nil)
 	if w.Code != 400 {
 		t.Fatal(w.Code)
 	}
@@ -386,7 +386,7 @@ func BenchmarkRandomRequest(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				w := httptest.NewRecorder()
-				h.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/sentences/random?categories=a&min_length=1&max_length=1", nil))
+				h.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1?categories=a&min_length=1&max_length=1", nil))
 				if w.Code != 200 {
 					b.Fatal(w.Code)
 				}
@@ -399,7 +399,7 @@ func FuzzQueryParameters(f *testing.F) {
 	f.Add("categories=a&min_length=0&max_length=1")
 	f.Add("%zz")
 	f.Fuzz(func(t *testing.T, q string) {
-		r := httptest.NewRequest("GET", "/api/v1/sentences/random", nil)
+		r := httptest.NewRequest("GET", "/api/v1", nil)
 		r.URL.RawQuery = q
 		vals, e := parseQuery(r, 4096, map[string]bool{"categories": true, "min_length": true, "max_length": true})
 		if e != nil {

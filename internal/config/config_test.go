@@ -56,7 +56,7 @@ func TestWebDefaults(t *testing.T) {
 	}
 	if c.HTTPAddr != ":8081" || !c.CookieSecure || c.SubmissionRatePerHour != 5 || c.SubmissionRatePerDay != 20 ||
 		c.SubmissionPendingLimit != 1000 || c.SubmissionRetention != 2160*time.Hour || c.SnapshotPollInterval != time.Minute ||
-		c.MySQLMaxOpenConns != 10 || c.ShutdownTimeout != 10*time.Second {
+		c.MySQLMaxOpenConns != 10 || c.ShutdownTimeout != 10*time.Second || c.APIMetricsURL != "" {
 		t.Fatalf("bad defaults: %#v", c)
 	}
 }
@@ -84,6 +84,17 @@ func TestWebValidation(t *testing.T) {
 		{"TRUSTED_PROXY_CIDRS": "bad"},
 		{"LOG_LEVEL": "trace"},
 		{"SHUTDOWN_TIMEOUT": ""},
+		{"SITE_REPO_URL": "ftp://x"},
+		{"SITE_REPO_URL": "https://u:p@example.com/x"},
+		{"API_BASE_URL": "/api"},
+		{"API_BASE_URL": "https://example.com/?x=1"},
+		{"API_BASE_URL": "http://:80"},
+		{"SITE_REPO_URL": "http://:80"},
+		{"API_BASE_URL": "https://example.com#"},
+		{"API_BASE_URL": "https://example.com?"},
+		{"SITE_REPO_URL": "https://example.com#"},
+		{"API_METRICS_URL": "https://example.com/healthz"},
+		{"API_METRICS_URL": "https://example.com#"},
 	}
 	for _, patch := range cases {
 		m := map[string]string{}
@@ -96,6 +107,14 @@ func TestWebValidation(t *testing.T) {
 		if _, e := load(ModeWeb, env(m)); e == nil {
 			t.Fatalf("accepted %#v", patch)
 		}
+	}
+	m := map[string]string{"API_BASE_URL": "https://example.com/", "SITE_REPO_URL": "https://github.com/x/y", "API_METRICS_URL": "http://127.0.0.1:8080"}
+	for k, v := range base {
+		m[k] = v
+	}
+	c, e := load(ModeWeb, env(m))
+	if e != nil || c.APIBaseURL != "https://example.com" || c.SiteRepoURL != "https://github.com/x/y" || c.APIMetricsURL != "http://127.0.0.1:8080/metrics" {
+		t.Fatalf("urls: %v %#v", e, c)
 	}
 }
 func TestWebAdminRequiredMissing(t *testing.T) {

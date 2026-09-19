@@ -1,8 +1,8 @@
 # 前台、投稿与后台规格
 
 配套开发规格版本：1.3  
-状态：草案，待评审  
-修订日期：2026-09-18
+状态：已实现\\
+修订日期：2026-09-19
 
 本文件定义 web 进程：面向人的前台站点、公开投稿、管理员后台。它由同一个二进制的 `sentence-api web` 子命令启动，作为独立容器（下文称 `sentence-web`）与只读 API 容器并列部署，共享同一个镜像、数据库和 `internal/` 包，但**不修改读 API 的任何行为**。读 API、数据模型、版本协议以 [开发规格](development-spec.md) 为准；本文只写它未覆盖的部分。
 
@@ -13,12 +13,14 @@
 - 前台页面：首页、接口文档、投稿、数据说明与下载。
 - 投稿接收、限流、防滥用。
 - 管理员登录、会话、多管理员管理。
+- 后台概况（句子规模、投稿队列、读接口调用次数）。
 - 投稿审核（通过 / 拒绝 / 修正后通过）。
 - 句子管理：列表、搜索、详情、编辑、新增、停用与恢复。
 - 分类管理：列表、新建、编辑名称与排序、启用与停用。
 - 句子库导出与署名。
+- 站点展示设置（名称、公开地址、联系方式、源代码地址、备案）。
 - 审核元数据的保留期清理。
-- `web` 子命令、迁移 `000002`、测试与文档。
+- `web` 子命令、迁移 `000002`/`000003`、测试与文档。
 
 不包含：
 
@@ -34,7 +36,7 @@
 1. **写权限只在 `sentence-web` 容器。** 读 API 容器继续用只读账号，web 容器用具备写权限的账号。同一镜像，不同启动命令和 DSN；两者可以独立重启、回滚、扩缩。
 2. **所有影响读结果的写入走 §6.3 版本协议。** 审核通过、句子编辑/新增/停用/恢复、分类新建/编辑/启停都在事务里先锁版本行，末尾递增一次版本；读 API 通过现有轮询自动加载，不需要通知。
 3. **投稿本身不递增版本。** 待审记录不进入快照，写它不影响读结果。
-4. **不引入前端框架、JS 构建、Redis、ORM。** 页面用 `html/template` 服务端渲染，`embed` 进二进制；进程内限流；一个新依赖 `golang.org/x/crypto`（argon2id）。
+4. **不引入前端框架、JS 构建、Redis、ORM。** 页面用 `html/template` 服务端渲染，`embed` 进二进制；前台 `site.css`、后台 `admin.css`；深浅色默认跟随系统，点过太阳/月亮后写 `localStorage`；进程内限流；一个新依赖 `golang.org/x/crypto`（argon2id）。
 5. **个人信息最小化。** 联系方式只在后台可见、只保留必要时长；公开的只有投稿人自选昵称。
 
 ## 2. 部署拓扑
@@ -139,21 +141,56 @@ CREATE TABLE admin_sessions (
 - 绝对有效期 24 小时，空闲 2 小时。`last_seen_at` 每次请求最多每 5 分钟写一次，避免每个请求写库。
 - 会话表在后台，是为了停用管理员时能立即使其登出；签名 Cookie 做不到这一点。
 
-### 3.4 schema 版本
+### 3.4 site_settings
 
-迁移后 `schema_migrations.version = 2`。`sentence-api` 和 `sentence-web` 的 `CheckSchema` 同时接受版本 2；1.3 起 `sentence-api` 不再接受版本 1。
+单行配置（`id = 1`），存前台展示字段。不进入读 API 快照，不递增 `dataset_versions`。
 
-**回滚约束**：1.2 的 `sentence-api` 镜像只接受版本 1，迁移到 2 之后它无法启动。发布顺序必须是：先部署接受版本 2 的 `sentence-api` 1.3，再执行迁移 `000002`，再部署 `sentence-web`。`000002.down.sql` 删除三张新表；执行前确认待审队列可以丢弃。
+```sql
+CREATE TABLE site_settings (
+    id             TINYINT UNSIGNED NOT NULL,
+    site_name      VARCHAR(64) NOT NULL,
+    english_name   VARCHAR(64) NULL,
+    slogan         VARCHAR(128) NULL,
+    contact        VARCHAR(256) NOT NULL,
+    public_origin  VARCHAR(512) NULL,
+    repo_url       VARCHAR(512) NULL,
+    beian_text     VARCHAR(128) NULL,
+    beian_url      VARCHAR(512) NULL,
+    updated_at     DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                   ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+- `site_name`：兼容保留的中文名称字段，1–64 码点，不全为空白。
+- `english_name`：可选英文名称，0–64 码点；`slogan`：可选站点标语，0–128 码点。两者保存前去除首尾空白并拒绝无效 UTF-8 和控制字符。
+- `contact`：1–256 字节 UTF-8，`/dataset` 下架联系方式。
+- `public_origin`、`repo_url`：空或绝对 `http`/`https` URL（≤512 字节，无 userinfo、fragment、query）；`public_origin` 入库前去掉末尾 `/`。
+- `beian_text`：空或 1–128 码点。
+- `beian_url`：空或绝对 `http`/`https` URL（允许 query，供公安备案链接）；有链接时必须同时有备案号。
+
+空库首次启动时，web 用环境变量插入这一行（`INSERT IGNORE`）；之后以后台保存为准，改环境变量不再覆盖。
+
+### 3.5 schema 版本
+
+`000002` 增加 `submissions`、`admin_users`、`admin_sessions`；`000003` 增加 `site_settings`；`000004` 为其增加可空的英文名称和标语，不改写已有 `site_name`。这些迁移都不改读快照所用表。因此：
+
+| 进程 | 接受的 `schema_migrations.version` |
+| --- | --- |
+| 读 API、`import` | 1、2、3 或 4 |
+| `web`、`web admin` | 仅 4 |
+
+**滚动升级到 4**：先把所有读 API 替换成接受 schema 4 的当前镜像 → `migrate up` 到 4 → 启动或重启当前 `sentence-web`。仍只接受 1–3 的旧读 API 不能跨迁移继续运行。回滚 `000004` 会删除英文名称和标语，中文名称及其他原有站点设置保留。
 
 ## 4. 前台页面
 
-所有页面 `html/template` 渲染，模板与静态资源（一份 CSS、极少量原生 JS）通过 `embed` 打进二进制。不依赖 CDN。页面语言中文。
+所有页面 `html/template` 渲染，静态资源通过 `embed` 打进二进制。不依赖 CDN、不引入 JS 框架或构建工具链。前台使用 `site.css`；后台使用独立 `admin.css` 与侧栏布局，不套用前台导航和页脚。页面语言中文。
 
 | 路径 | 方法 | 内容 |
 | --- | --- | --- |
-| `/` | GET | 项目介绍；"随机一句"区块（浏览器 JS 同源调用 `/api/v1/sentences/random`，无 JS 时显示静态说明）；最近通过投稿前 20 条（内容、分类、昵称）；入口链接 |
-| `/docs` | GET | 接口文档：端点、参数、响应结构、错误格式与 `code` 表、`curl` 和 `fetch` 示例、限制说明。当前启用分类表来自公开数据缓存（第 4.1 节），其余内容静态 |
-| `/submit` | GET | 投稿表单 |
+| `/` | GET | 介绍居中无标题、无入口按钮；随机一句，换一句居中；紧接下三条说明卡横排。页脚贴视口底部 |
+| `/docs` | GET | 接口文档：先给四条分开说明的 `fetch` 示例（随机、按分类、限制长度、列出分类），再写端点、参数、响应结构；只说明参数错误 400、无匹配 404，不列完整错误 `code` 表。当前启用分类表来自公开数据缓存（第 4.1 节），其余内容静态 |
+| `/submit` | GET | 投稿表单（双列表单）；底部最近通过投稿前 20 条（内容、分类、昵称） |
 | `/submit` | POST | 提交投稿；成功 `303` 到 `/submit/done`，失败重新渲染表单并标注字段错误 |
 | `/submit/done` | GET | 感谢页，说明审核流程和预期时间 |
 | `/dataset` | GET | 数据说明：来源署名、许可、投稿数据的公开条件、下载链接、下架请求联系方式 |
@@ -180,7 +217,7 @@ CREATE TABLE admin_sessions (
 3. 每 `SNAPSHOT_POLL_INTERVAL` 轮询 `dataset_versions.version`，与缓存版本不同时重新生成，用于捕获外部导入。
 4. 审核通过或拒绝不改变版本时，"最近通过"仍可能变化（通过会递增版本，拒绝不影响该列表），因此第 2 条覆盖了所有本进程引起的变化。
 
-同一时刻最多一个生成任务在跑；重复触发合并为一次。
+同一时刻最多一个生成任务在跑；重复触发合并为一次。刷新使用服务生命周期 context，并加入退出等待组；收到退出信号后取消进行中的生成，等它结束后再关闭数据库。
 
 数据库不可用时前台照常显示缓存内容，只有需要写库的操作（投稿、后台）失败。
 
@@ -240,11 +277,12 @@ CREATE TABLE admin_sessions (
 | 路径 | 方法 | 说明 |
 | --- | --- | --- |
 | `/admin/login` | GET | 登录表单 |
-| `/admin/login` | POST | 校验用户名密码；成功创建会话，`303` 到 `/admin/` |
+| `/admin/login` | POST | 校验用户名密码；成功创建会话，`303` 到 `/admin/`（概况） |
 | `/admin/logout` | POST | 删除当前会话，清 Cookie，`303` 到 `/admin/login` |
 
 - 用户名不存在与密码错误返回相同错误文案和相近响应时间；被停用账号同样按凭证错误处理。
-- 登录限速：每 IP 15 分钟 10 次失败，每用户名 15 分钟 5 次失败；超限返回 `429`，不透露哪一项触发。
+- 登录限速：每 IP 15 分钟 10 次失败，每用户名 15 分钟 5 次失败；进入密码校验前预占额度，进行中的尝试计入窗口。进程内同时进行的 Argon2 校验最多 2 个。超限返回 `429`，不透露哪一项触发。
+- 校验通过后，在事务中 `SELECT ... FOR UPDATE` 锁定账号，复核密码哈希与启用状态后再插入会话。哈希已变或账号已停用则按凭证错误处理。该锁与重置密码事务串行化，避免旧密码在重置完成后仍能建会话。
 - 登录成功重置该用户名的失败计数，并更新 `last_login_at`。
 
 ### 6.2 会话 Cookie
@@ -268,13 +306,22 @@ CREATE TABLE admin_sessions (
 
 ## 7. 后台功能
 
-所有页面服务端渲染，操作全部是表单 `POST`，成功后 `303` 回列表页。
+所有页面服务端渲染，操作全部是表单 `POST`，成功后 `303` 回列表页。已登录页为侧栏 + 顶栏的后台壳（`admin.css`），登录页为独立卡片，均不出现前台导航与 AGPL 页脚。
+
+### 7.0 概况
+
+| 路径 | 方法 | 说明 |
+| --- | --- | --- |
+| `/admin/` | GET | 后台首页。展示已发布/停用句子数、启用分类、待审与已处理投稿、近 24 小时投稿、数据集版本。读接口调用次数从读 API 进程的 `/metrics` 拉取（`API_METRICS_URL`），为该进程自启动以来的累计值，未配置或拉取失败显示 "—" |
+
+登录成功 `303` 到本页。
 
 ### 7.1 审核
 
 | 路径 | 方法 | 说明 |
 | --- | --- | --- |
-| `/admin/` | GET | 待审列表，`created_at ASC`，每页 50，显示内容、分类、出处、作者、昵称、提交时间、待审重复标记 |
+| `/admin/` | GET | 概况（见第 7.0 节） |
+| `/admin/submissions` | GET | 待审列表，`created_at ASC`，每页 50，显示内容、分类、出处、作者、昵称、提交时间、待审重复标记 |
 | `/admin/submissions?status=approved\|rejected` | GET | 已处理列表，`reviewed_at DESC`，每页 50 |
 | `/admin/submissions/{id}` | GET | 详情：全部字段（含联系方式、IP）、审核人、审核时间；待审状态时可编辑 |
 | `/admin/submissions/{id}/approve` | POST | 通过；表单可携带修正后的 `content`、`category`、`source`、`author`，修正覆盖原投稿字段后再发布 |
@@ -351,10 +398,19 @@ CREATE TABLE admin_sessions (
 | `/admin/users` | POST | 新建：用户名 + 初始密码（由创建者输入，两次确认） |
 | `/admin/users/{id}/disable` | POST | 停用并删除其会话；拒绝停用自己和最后一个启用账号 |
 | `/admin/users/{id}/enable` | POST | 启用 |
-| `/admin/users/{id}/reset-password` | POST | 重置他人密码并删除其会话 |
-| `/admin/password` | GET, POST | 修改自己密码，需输入当前密码；成功后删除自己其他会话 |
+| `/admin/users/{id}/reset-password` | GET, POST | 独立重置密码页；提交后更新目标账户密码并删除其现有会话 |
+| `/admin/password` | GET, POST | 修改自己密码，需输入当前密码；成功后删除自己其他会话。更新事务复核验证时的密码哈希，若期间已被重置则拒绝 |
 
-### 7.5 CLI
+### 7.5 站点设置
+
+| 路径 | 方法 | 说明 |
+| --- | --- | --- |
+| `/admin/settings` | GET | 表单：中文名称、英文名称、站点标语、站点公开地址、联系方式、源代码地址、备案号、备案链接 |
+| `/admin/settings` | POST | 保存；成功 `303` 回本页。立即覆盖进程内前台展示，不递增数据集版本 |
+
+所有管理员权限相同。校验失败以 `400` 重新渲染表单并提示原因。
+
+### 7.6 CLI
 
 ```text
 sentence-api web                                   # 启动 web 进程
@@ -377,14 +433,20 @@ sentence-api web admin reset-password --username <name>
 
 ### 8.2 署名与许可声明
 
-`/dataset` 页面和所有前台页脚固定展示：
+来源声明只在 `/dataset`（模板常量，不入库）：
 
 - 初始句子库来源：`hitokoto-osc/sentences-bundle`（链接），许可 AGPL v3。
 - 本站句子库（含后续用户投稿）在相同条件下开放，下载链接。
-- 程序为独立实现，许可另行说明（链接到仓库）。
-- 下架请求联系方式（由 `SITE_CONTACT` 配置）。
 
-这些文本是模板常量，不放数据库。
+前台页脚不重复这段。页脚一行：左版权与可选 GitHub 图标源码链接，右备案；下架联系方式只在 `/dataset`。所有外链 `target="_blank"`，并带 `rel="noopener noreferrer"`。
+
+以下来自 `site_settings`（后台「站点设置」）：
+
+- 中文名称（导航、页脚版权、后台品牌）、可选英文名称（组合标题与后台品牌）和可选站点标语（首页）。
+- 程序源代码链接（空则不展示；页脚以 GitHub 图标显示）。
+- 下架请求联系方式（仅 `/dataset`）。
+- 备案号与可选备案链接（空则不展示）。
+- `/docs` 示例中的 API 基址（`public_origin`；空则示例使用相对路径）。
 
 ## 9. 保留期清理
 
@@ -410,7 +472,10 @@ sentence-api web admin reset-password --username <name>
 | `MYSQL_CONN_MAX_LIFETIME` | 否 | `30m` | |
 | `WEB_SECRET_KEY` | 是 | 无 | 32–256 字节可打印 ASCII，签名表单令牌；泄露只影响防滥用，不影响会话 |
 | `COOKIE_SECURE` | 否 | `true` | 会话 Cookie 是否带 `Secure` |
-| `SITE_CONTACT` | 是 | 无 | 下架请求联系方式，前台展示 |
+| `SITE_CONTACT` | 是 | 无 | 空库首次写入 `site_settings.contact` 的种子；有行后以后台设置为准 |
+| `SITE_REPO_URL` | 否 | 空 | 空库首次写入 `repo_url` 的种子 |
+| `API_BASE_URL` | 否 | 空 | 空库首次写入 `public_origin` 的种子（`http`/`https`，≤512 字节，无 query）；有行后以后台设置为准 |
+| `API_METRICS_URL` | 否 | 空 | 读 API 内网 `/metrics` 地址，供后台概况展示接口调用次数。可写 `http://127.0.0.1:8080` 或完整 `/metrics` 路径；公网域名上的 `/metrics` 应继续拒绝 |
 | `SUBMISSION_RATE_PER_HOUR` | 否 | `5` | 每 IP 每小时 |
 | `SUBMISSION_RATE_PER_DAY` | 否 | `20` | 每 IP 每天 |
 | `SUBMISSION_PENDING_LIMIT` | 否 | `1000` | 待审队列上限 |
@@ -437,14 +502,14 @@ sentence-api web admin reset-password --username <name>
 - `web_reviews_total{action,result}`：`approve`/`reject` × `success`/`conflict`/`duplicate`/`error`。
 - `web_sentence_changes_total{action,result}`：`create`/`edit`/`disable`/`enable` × `success`/`conflict`/`duplicate`/`unchanged`/`error`。
 - `web_category_changes_total{action,result}`：`create`/`edit`/`disable`/`enable` × 同上。
-- `web_login_attempts_total{result}`：`success`/`failure`/`rate_limited`。
-- `web_pending_submissions`：待审数量（缓存值）。
-- `web_retention_rows_total{action}`：`deleted`/`redacted`。
-- `web_dataset_export_version`、`web_dataset_export_bytes`。
+- `web_admin_login_total{result}`：`success`/`failure`/`rate_limited`。
+- `web_public_data_version`、`web_public_data_export_bytes`、`web_public_data_builds_total{result}`。
+- `web_pending_submissions`：待审投稿数量（进程内缓存值，启动后与保留期任务刷新）。
+- `web_retention_rows_total{action}`：`deleted` / `redacted`。
 
 ## 12. 启停
 
-启动顺序：加载配置 → 连接数据库 → `CheckSchema` 版本 2 → 生成公开数据缓存 → 启动 HTTP → 启动版本轮询与清理任务。缓存生成失败则启动失败。
+启动顺序：加载配置 → 连接数据库 → `CheckWriteSchema`（版本 4）→ 种子/读取 `site_settings` → 生成公开数据缓存 → 启动 HTTP → 启动版本轮询与清理任务。缓存生成失败则启动失败。
 
 `/readyz`：公开数据缓存存在且未进入退出流程。数据库暂时不可用不影响 ready，与读 API 的语义一致；数据库状态通过指标报告。
 
@@ -477,3 +542,10 @@ sentence-api web admin reset-password --username <name>
 - JSON 投稿接口（供第三方客户端）。
 - 多实例时的共享限流。
 - 投稿人自助查询状态。
+
+## 16. 实现状态
+
+- 已实现：`sentence-api web` 与 `web admin` CLI、公开数据缓存、投稿/后台 HTTP、Prometheus 指标（含 `web_pending_submissions`、`web_retention_rows_total`）、保留期清理（5 分钟首次 / 24 小时周期）、`/readyz` 仅检查公开数据缓存、Docker 同镜像双容器、`scripts/smoke-web.sh`、`scripts/e2e-web.sh`、投稿表单与后台 UUID 路径 fuzz、web admin CLI usage 单元测试。后台为独立 layout/`admin.css` 侧栏壳，不套用前台导航。站点展示字段走 `site_settings` 与 `/admin/settings`。
+- 读 API / import 接受 schema 1–4；web 要求 schema 4。
+- 与早期草案差异：指标命名以 §11 的 `web_admin_login_total`、`web_public_data_*` 为准；`web admin list` / `enable` 为实现便利追加的子命令（§7.6 未列）。
+- CI `image` job 用 MariaDB 服务容器做 web 基础 smoke；完整 `MYSQL_TEST_DSN` 集成与 `make e2e-web` 在本机/`scripts/test-mariadb.sh` 运行，不绑定 PR。

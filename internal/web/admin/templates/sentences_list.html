@@ -1,11 +1,9 @@
-{{define "sentences_list"}}{{template "layout" .}}{{end}}
+{{define "sentences_list"}}{{template "admin_layout" .}}{{end}}
 {{define "title"}}句子管理{{end}}
 {{define "content"}}
-{{template "admin_bar" .}}
-<h1>句子管理</h1>
+<div class="page-heading"><div><p class="eyebrow">内容库</p><h1>句子管理</h1><p class="meta">共 {{.Data.Total}} 条</p></div><div class="heading-actions"><a class="button" href="/admin/sentences/new">新增句子</a></div></div>
 {{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
-<p><a href="/admin/sentences/new">新增句子</a></p>
-<form method="get" action="/admin/sentences">
+<form class="filter-form" method="get" action="/admin/sentences">
 <label>分类 <input name="category" value="{{.Data.Category}}"></label>
 <label>状态
 <select name="status">
@@ -18,7 +16,7 @@
 <label>UUID <input name="uuid" value="{{.Data.UUID}}"></label>
 <button type="submit">筛选</button>
 </form>
-<p>共 {{.Data.Total}} 条</p>
+<div class="table-shell">
 <table>
 <thead><tr><th>UUID</th><th>内容</th><th>分类</th><th>出处</th><th>作者</th><th>长度</th><th>状态</th><th>发布时间</th></tr></thead>
 <tbody>
@@ -30,14 +28,15 @@
 <td>{{.Source}}</td>
 <td>{{.Author}}</td>
 <td>{{.Length}}</td>
-<td>{{sentenceStatus .Status}}</td>
-<td>{{if .PublishedAt}}{{.PublishedAt}}{{end}}</td>
+<td><span class="status-badge {{if eq .Status 1}}is-success{{else}}is-muted{{end}}">{{sentenceStatus .Status}}</span></td>
+<td class="cell-time">{{if .PublishedAt}}{{formatTime .PublishedAt}}{{end}}</td>
 </tr>
 {{else}}
 <tr><td colspan="8">暂无句子</td></tr>
 {{end}}
 </tbody>
 </table>
+</div>
 {{if gt .Data.Pages 1}}
 <nav class="pagination">
 {{if .Data.PrevPage}}<a href="/admin/sentences?category={{.Data.Category}}&amp;status={{.Data.Status}}&amp;q={{.Data.Query}}&amp;uuid={{.Data.UUID}}&amp;page={{.Data.PrevPage}}">上一页</a>{{end}}

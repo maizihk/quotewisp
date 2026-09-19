@@ -45,7 +45,8 @@ func TestVerifyMalformedPHC(t *testing.T) {
 	cases := []string{
 		"",
 		"not-a-phc",
-		"$argon2id$v=19$m=65536,t=3,p=2$!!!$!!!",
+		"$argon2id$v=19$m=2147483647,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"$argon2id$v=19$m=65536,t=100000,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"$argon2id$v=18$m=65536,t=3,p=2$abc$abc",
 		"$argon2i$v=19$m=65536,t=3,p=2$abc$abc",
 	}
@@ -201,35 +202,79 @@ func TestLoginLimiter(t *testing.T) {
 	l := NewLoginLimiter(3, 2, 15*time.Minute, 1000)
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	if !l.Allow("1.2.3.4", "alice", now) {
-		t.Fatal("initial allow")
+	if !l.Reserve("1.2.3.4", "alice", now) {
+		t.Fatal("initial reserve")
 	}
 	l.Failure("1.2.3.4", "alice", now)
+	if !l.Reserve("1.2.3.4", "alice", now) {
+		t.Fatal("second reserve")
+	}
 	l.Failure("1.2.3.4", "alice", now)
-	if l.Allow("1.2.3.4", "alice", now.Add(time.Minute)) {
+	if l.Reserve("1.2.3.4", "alice", now.Add(time.Minute)) {
 		t.Fatal("user limit should block")
 	}
-	if l.Allow("5.6.7.8", "alice", now.Add(time.Minute)) {
+	if l.Reserve("5.6.7.8", "alice", now.Add(time.Minute)) {
 		t.Fatal("user limit applies across IPs")
 	}
-	if !l.Allow("1.2.3.4", "bob", now.Add(time.Minute)) {
+	if !l.Reserve("1.2.3.4", "bob", now.Add(time.Minute)) {
 		t.Fatal("different user on same IP should pass user check")
 	}
+	l.Release("1.2.3.4", "bob")
 
 	l2 := NewLoginLimiter(3, 10, 15*time.Minute, 1000)
-	l2.Failure("9.9.9.9", "carol", now)
-	l2.Failure("9.9.9.9", "carol", now)
-	l2.Failure("9.9.9.9", "carol", now)
-	if l2.Allow("9.9.9.9", "dave", now.Add(time.Minute)) {
+	for i := 0; i < 3; i++ {
+		if !l2.Reserve("9.9.9.9", "carol", now) {
+			t.Fatal("reserve before IP limit")
+		}
+		l2.Failure("9.9.9.9", "carol", now)
+	}
+	if l2.Reserve("9.9.9.9", "dave", now.Add(time.Minute)) {
 		t.Fatal("IP limit should block")
 	}
 
 	l3 := NewLoginLimiter(10, 5, 15*time.Minute, 1000)
 	for i := 0; i < 4; i++ {
+		if !l3.Reserve("ip", "eve", now.Add(time.Duration(i)*time.Minute)) {
+			t.Fatal("reserve eve")
+		}
 		l3.Failure("ip", "eve", now.Add(time.Duration(i)*time.Minute))
 	}
-	l3.Success("eve")
-	if !l3.Allow("ip", "eve", now.Add(5*time.Minute)) {
+	if !l3.Reserve("ip", "eve", now.Add(5*time.Minute)) {
+		t.Fatal("reserve after four failures")
+	}
+	l3.Success("ip", "eve")
+	if !l3.Reserve("ip", "eve", now.Add(5*time.Minute)) {
 		t.Fatal("Success should reset user failures")
+	}
+	l3.Release("ip", "eve")
+}
+
+func TestLoginLimiterReserveOccupiesBudget(t *testing.T) {
+	l := NewLoginLimiter(2, 2, 15*time.Minute, 1000)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	if !l.Reserve("1.1.1.1", "a", now) || !l.Reserve("1.1.1.1", "b", now) {
+		t.Fatal("two in-flight reserves")
+	}
+	if l.Reserve("1.1.1.1", "c", now) {
+		t.Fatal("in-flight should occupy IP budget")
+	}
+	l.Release("1.1.1.1", "b")
+	if !l.Reserve("1.1.1.1", "c", now) {
+		t.Fatal("release should free IP budget")
+	}
+}
+
+func TestLoginLimiterVerifySlots(t *testing.T) {
+	l := NewLoginLimiter(10, 5, 15*time.Minute, 1000)
+	l.verifySem = make(chan struct{}, 1)
+	if !l.TryAcquireVerify() {
+		t.Fatal("first verify slot")
+	}
+	if l.TryAcquireVerify() {
+		t.Fatal("second verify slot should be refused")
+	}
+	l.ReleaseVerify()
+	if !l.TryAcquireVerify() {
+		t.Fatal("slot after release")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"sentence-api/internal/web/auth"
@@ -29,25 +30,30 @@ type Metrics interface {
 
 // Deps configures the admin HTTP handler.
 type Deps struct {
-	Store        *store.Store
-	Renderer     *render.Renderer
-	Logger       *slog.Logger
-	Metrics      Metrics
-	Logins       *auth.LoginLimiter
-	CookieSecure bool
-	OnChange     func()
+	Store         *store.Store
+	Renderer      *render.Renderer
+	Logger        *slog.Logger
+	Metrics       Metrics
+	Logins        *auth.LoginLimiter
+	Tokens        *render.FormTokens
+	CookieSecure  bool
+	OnChange      func()
+	APIMetricsURL string
 }
 
 type handler struct {
-	store        *store.Store
-	renderer     *render.Renderer
-	logger       *slog.Logger
-	metrics      Metrics
-	logins       *auth.LoginLimiter
-	cookieSecure bool
-	onChange     func()
-	dummyHash    string
-	mux          *http.ServeMux
+	store         *store.Store
+	renderer      *render.Renderer
+	logger        *slog.Logger
+	metrics       Metrics
+	logins        *auth.LoginLimiter
+	tokens        *render.FormTokens
+	cookieSecure  bool
+	onChange      func()
+	apiMetricsURL string
+	dummyHash     string
+	mux           *http.ServeMux
+	settingsMu    sync.Mutex
 }
 
 type noopMetrics struct{}
@@ -71,6 +77,9 @@ func New(d Deps) (http.Handler, error) {
 	if d.Logins == nil {
 		d.Logins = auth.NewLoginLimiter(10, 5, 15*time.Minute, 100000)
 	}
+	if d.Tokens == nil {
+		return nil, fmt.Errorf("admin: Tokens is required")
+	}
 	if d.OnChange == nil {
 		d.OnChange = func() {}
 	}
@@ -79,14 +88,16 @@ func New(d Deps) (http.Handler, error) {
 		return nil, fmt.Errorf("admin: dummy hash: %w", err)
 	}
 	h := &handler{
-		store:        d.Store,
-		renderer:     d.Renderer,
-		logger:       d.Logger,
-		metrics:      d.Metrics,
-		logins:       d.Logins,
-		cookieSecure: d.CookieSecure,
-		onChange:     d.OnChange,
-		dummyHash:    dummyHash,
+		store:         d.Store,
+		renderer:      d.Renderer,
+		logger:        d.Logger,
+		metrics:       d.Metrics,
+		logins:        d.Logins,
+		tokens:        d.Tokens,
+		cookieSecure:  d.CookieSecure,
+		onChange:      d.OnChange,
+		apiMetricsURL: d.APIMetricsURL,
+		dummyHash:     dummyHash,
 	}
 	h.registerRoutes()
 	return h.serve(), nil
@@ -117,6 +128,7 @@ var routeRules = []struct {
 	{regexp.MustCompile(`^/admin/users/\d+/disable$`), "/admin/users/{id}/disable"},
 	{regexp.MustCompile(`^/admin/users/\d+/enable$`), "/admin/users/{id}/enable"},
 	{regexp.MustCompile(`^/admin/users$`), "/admin/users"},
+	{regexp.MustCompile(`^/admin/settings$`), "/admin/settings"},
 	{regexp.MustCompile(`^/admin/?$`), "/admin/"},
 }
 

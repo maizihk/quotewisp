@@ -46,8 +46,61 @@ func TestValidationHelpers(t *testing.T) {
 	if err := store.ValidateSentenceFields("hello", "src", "auth", 0); err != nil {
 		t.Fatalf("zero max runes should allow long content within DB limits: %v", err)
 	}
+	if err := store.ValidateWebSentenceFields("hello", "src", "auth", 0); err != nil {
+		t.Fatalf("valid web sentence rejected: %v", err)
+	}
+	if err := store.ValidateWebSentenceFields("hello", "", "", 0); err == nil {
+		t.Fatal("web sentence without source or author accepted")
+	}
 	if store.RuneLength("你好") != 2 {
 		t.Fatalf("unexpected rune length: %d", store.RuneLength("你好"))
+	}
+	if err := store.ValidateSiteSettings(store.SiteSettings{Name: "句子 API", Contact: "a@b.c"}); err != nil {
+		t.Fatalf("valid settings rejected: %v", err)
+	}
+	if err := store.ValidateSiteSettings(store.SiteSettings{Name: "   ", Contact: "a@b.c"}); err == nil {
+		t.Fatal("blank site name accepted")
+	}
+	if err := store.ValidateSiteSettings(store.SiteSettings{Name: "句子 API", Contact: "a@b.c", PublicOrigin: "example.com"}); err == nil {
+		t.Fatal("origin without scheme accepted")
+	}
+	if err := store.ValidateSiteSettings(store.SiteSettings{Name: "句子 API", Contact: "a@b.c", PublicOrigin: "http://:80"}); err == nil {
+		t.Fatal("origin with empty host accepted")
+	}
+	if err := store.ValidateSiteSettings(store.SiteSettings{Name: "句子 API", Contact: "a@b.c", PublicOrigin: "https://example.com#"}); err == nil {
+		t.Fatal("origin with fragment accepted")
+	}
+	if err := store.ValidateSiteSettings(store.SiteSettings{Name: "句子 API", Contact: "a@b.c", PublicOrigin: "https://example.com?"}); err == nil {
+		t.Fatal("origin with empty query accepted")
+	}
+	if err := store.ValidateSiteSettings(store.SiteSettings{Name: "句子 API", Contact: "a@b.c", BeianURL: "https://beian.miit.gov.cn/"}); err == nil {
+		t.Fatal("beian url without text accepted")
+	}
+	if err := store.ValidateSiteSettings(store.SiteSettings{
+		Name: "句子 API", Contact: "a@b.c", BeianText: "京ICP备1号",
+		BeianURL: "https://www.beian.gov.cn/portal/registerSystemInfo?recordcode=1",
+	}); err != nil {
+		t.Fatalf("beian url with query rejected: %v", err)
+	}
+	for _, tc := range []struct {
+		field string
+		set   func(*store.SiteSettings)
+	}{
+		{field: "english_name", set: func(s *store.SiteSettings) { s.EnglishName = strings.Repeat("a", 65) }},
+		{field: "english_name", set: func(s *store.SiteSettings) { s.EnglishName = "bad\x00name" }},
+		{field: "slogan", set: func(s *store.SiteSettings) { s.Slogan = strings.Repeat("句", 129) }},
+		{field: "slogan", set: func(s *store.SiteSettings) { s.Slogan = "bad\u0085text" }},
+	} {
+		in := store.SiteSettings{Name: "拾句", Contact: "a@b.c"}
+		tc.set(&in)
+		var ve *store.ValidationError
+		if err := store.ValidateSiteSettings(in); !errors.As(err, &ve) || ve.Field != tc.field {
+			t.Fatalf("field=%s err=%v", tc.field, err)
+		}
+	}
+	normalized := store.NormalizeSiteSettings(store.SiteSettings{Name: " 拾句 ", EnglishName: " Quotewisp ", Slogan: " 偶遇一句话 ", Contact: " a@b.c "})
+	if normalized.Name != "拾句" || normalized.EnglishName != "Quotewisp" || normalized.Slogan != "偶遇一句话" || normalized.Contact != "a@b.c" {
+		t.Fatalf("normalized=%+v", normalized)
 	}
 }
 
@@ -212,6 +265,157 @@ func TestApproveRejectAndSentences(t *testing.T) {
 	}
 	if err = st.SetSentenceStatus(ctx, uuid, 3, 1); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("wrong from status: %v", err)
+	}
+}
+
+func TestConcurrentDisableAdmin(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	id1, err := st.CreateAdmin(ctx, "admin1", "hash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := st.CreateAdmin(ctx, "admin2", "hash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var okCount int32
+	var lastAdminCount int32
+	var wg sync.WaitGroup
+	for _, id := range []uint64{id1, id2} {
+		wg.Add(1)
+		go func(adminID uint64) {
+			defer wg.Done()
+			if err := st.SetAdminEnabled(ctx, adminID, false); err == nil {
+				atomic.AddInt32(&okCount, 1)
+			} else if errors.Is(err, store.ErrLastAdmin) {
+				atomic.AddInt32(&lastAdminCount, 1)
+			} else {
+				t.Errorf("disable admin %d: %v", adminID, err)
+			}
+		}(id)
+	}
+	wg.Wait()
+	if okCount != 1 {
+		t.Fatalf("concurrent disable successes=%d want 1", okCount)
+	}
+	if lastAdminCount != 1 {
+		t.Fatalf("concurrent disable last-admin=%d want 1", lastAdminCount)
+	}
+	admins, err := st.ListAdmins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := 0
+	for _, a := range admins {
+		if a.Enabled {
+			enabled++
+		}
+	}
+	if enabled != 1 {
+		t.Fatalf("enabled admins=%d want 1", enabled)
+	}
+}
+
+func TestConcurrentCreateSubmissionDuplicate(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	seedCategory(t, st, ctx)
+	ip := netip.MustParseAddr("203.0.113.10")
+	sub := store.NewSubmission{
+		Content: "并发重复投稿", CategoryCode: "original", Source: "出处", Author: "作者",
+		Contact: "c@example.com", ClientIP: ip,
+	}
+	var okCount int32
+	var dupCount int32
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := st.CreateSubmission(ctx, sub, 1000); err == nil {
+				atomic.AddInt32(&okCount, 1)
+			} else if errors.Is(err, store.ErrDuplicate) {
+				atomic.AddInt32(&dupCount, 1)
+			} else {
+				t.Errorf("create submission: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if okCount != 1 {
+		t.Fatalf("concurrent duplicate submissions=%d want 1", okCount)
+	}
+	if dupCount != 7 {
+		t.Fatalf("concurrent duplicate rejections=%d want 7", dupCount)
+	}
+}
+
+func TestConcurrentCreateSubmissionQueueLimit(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	seedCategory(t, st, ctx)
+	ip := netip.MustParseAddr("203.0.113.11")
+	var okCount int32
+	var fullCount int32
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			sub := store.NewSubmission{
+				Content: fmt.Sprintf("并发队列-%d", n), CategoryCode: "original", Source: "s", Author: "a",
+				Contact: "c@example.com", ClientIP: ip,
+			}
+			if _, err := st.CreateSubmission(ctx, sub, 1); err == nil {
+				atomic.AddInt32(&okCount, 1)
+			} else if errors.Is(err, store.ErrQueueFull) {
+				atomic.AddInt32(&fullCount, 1)
+			} else {
+				t.Errorf("create submission: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if okCount != 1 {
+		t.Fatalf("concurrent queue submissions=%d want 1", okCount)
+	}
+	if fullCount != 7 {
+		t.Fatalf("concurrent queue full=%d want 7", fullCount)
+	}
+}
+
+func TestWebSentenceRequiresSourceOrAuthor(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	seedCategory(t, st, ctx)
+	_, err := st.CreateSentence(ctx, store.SentenceFields{
+		Content: "无出处作者", CategoryCode: "original",
+	})
+	if err == nil {
+		t.Fatal("create sentence without source/author accepted")
+	}
+	var ve *store.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	uuid, err := st.CreateSentence(ctx, store.SentenceFields{
+		Content: "有出处", CategoryCode: "original", Source: "出处",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.UpdateSentence(ctx, uuid, store.SentenceFields{
+		Content: "有出处", CategoryCode: "original",
+	}); err == nil {
+		t.Fatal("update sentence clearing source/author accepted")
+	}
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected validation error, got %v", err)
 	}
 }
 
@@ -441,5 +645,238 @@ func TestSessionsAndPublicDataRetention(t *testing.T) {
 	}
 	if got.Contact != "" || got.ClientIP.IsValid() {
 		t.Fatal("approved submission not redacted")
+	}
+}
+
+func TestListPendingSingleConn(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	st := store.New(sqlDB)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	seedCategory(t, st, ctx)
+	ip := netip.MustParseAddr("203.0.113.10")
+	for i := 0; i < 2; i++ {
+		sub := store.NewSubmission{
+			Content: fmt.Sprintf("pending-%d", i), CategoryCode: "original", Source: "出处", Author: "作者",
+			Contact: "a@b.c", ClientIP: ip,
+		}
+		if _, err := st.CreateSubmission(ctx, sub, 1000); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, total, err := st.ListSubmissions(ctx, store.SubmissionPending, 1, 50)
+	if err != nil {
+		t.Fatalf("list with MaxOpenConns=1: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("got total=%d n=%d", total, len(items))
+	}
+}
+
+func TestResetAdminPasswordRevokesSessions(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	id, err := st.CreateAdmin(ctx, "resetme", "oldhash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	var keep, drop, csrf [32]byte
+	keep[0], drop[0], csrf[0] = 1, 2, 3
+	for _, h := range [][32]byte{keep, drop} {
+		if err = st.CreateSession(ctx, store.Session{
+			TokenHash: h, AdminID: id, Username: "resetme", CSRFToken: csrf,
+			CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = st.ResetAdminPassword(ctx, id, "newhash", &keep); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.GetSession(ctx, keep, now); err != nil {
+		t.Fatalf("kept session: %v", err)
+	}
+	if _, err = st.GetSession(ctx, drop, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("dropped session: %v", err)
+	}
+	if err = st.ResetAdminPassword(ctx, id, "newerhash", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.GetSession(ctx, keep, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("expected all sessions revoked")
+	}
+}
+
+func TestCreateLoginSessionRejectsStaleHash(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	id, err := st.CreateAdmin(ctx, "stalehash", "oldhash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.ResetAdminPassword(ctx, id, "newhash", nil); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	var token, csrf [32]byte
+	token[0], csrf[0] = 4, 5
+	err = st.CreateLoginSession(ctx, store.Session{
+		TokenHash: token, AdminID: id, CSRFToken: csrf,
+		CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour),
+	}, "oldhash")
+	if !errors.Is(err, store.ErrStaleAuth) {
+		t.Fatalf("stale hash: %v", err)
+	}
+	if _, err = st.GetSession(ctx, token, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("stale login must not leave a session")
+	}
+
+	if err = st.CreateLoginSession(ctx, store.Session{
+		TokenHash: token, AdminID: id, CSRFToken: csrf,
+		CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour),
+	}, "newhash"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetAdminByID(ctx, id)
+	if err != nil || got.LastLoginAt == nil {
+		t.Fatalf("last login: %v %+v", err, got)
+	}
+}
+
+func TestCreateLoginSessionLosesToPasswordReset(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	id, err := st.CreateAdmin(ctx, "racereset", "oldhash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	var token, csrf [32]byte
+	token[0], csrf[0] = 6, 7
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var loginErr, resetErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		loginErr = st.CreateLoginSession(ctx, store.Session{
+			TokenHash: token, AdminID: id, CSRFToken: csrf,
+			CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour),
+		}, "oldhash")
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		resetErr = st.ResetAdminPassword(ctx, id, "newhash", nil)
+	}()
+	close(start)
+	wg.Wait()
+
+	if resetErr != nil {
+		t.Fatalf("reset must succeed: %v", resetErr)
+	}
+	if loginErr != nil && !errors.Is(loginErr, store.ErrStaleAuth) {
+		t.Fatalf("login: %v", loginErr)
+	}
+	admin, err := st.GetAdminByID(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admin.PasswordHash != "newhash" {
+		t.Fatalf("hash=%q", admin.PasswordHash)
+	}
+	if _, err = st.GetSession(ctx, token, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("session created with old hash after reset")
+	}
+}
+
+func TestChangeAdminPasswordRejectsStaleHash(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	id, err := st.CreateAdmin(ctx, "selfchange", "oldhash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	var keep, csrf [32]byte
+	keep[0], csrf[0] = 8, 9
+	if err = st.CreateSession(ctx, store.Session{
+		TokenHash: keep, AdminID: id, Username: "selfchange", CSRFToken: csrf,
+		CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.ResetAdminPassword(ctx, id, "adminreset", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.ChangeAdminPassword(ctx, id, "oldhash", "selfnew", &keep); !errors.Is(err, store.ErrStaleAuth) {
+		t.Fatalf("stale self-change: %v", err)
+	}
+	got, err := st.GetAdminByID(ctx, id)
+	if err != nil || got.PasswordHash != "adminreset" {
+		t.Fatalf("hash overwritten: %v %+v", err, got)
+	}
+}
+
+func TestAdminOverviewCounts(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	if err := st.CreateCategory(ctx, "original", "原创", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateSentence(ctx, store.SentenceFields{
+		Content: "概况测试句子", CategoryCode: "original", Source: "出处", Author: "作者",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.AdminOverview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PublishedSentences != 1 || got.EnabledCategories != 1 || got.DatasetVersion == 0 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestSiteSettingsEnsureAndUpsert(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	seed := store.SiteSettings{Name: "句子 API", EnglishName: "Quotewisp", Slogan: "偶遇一句话", Contact: "seed@example.com", PublicOrigin: "https://example.com/", RepoURL: "https://github.com/x/y"}
+	got, err := st.EnsureSettings(ctx, seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "句子 API" || got.EnglishName != "Quotewisp" || got.Slogan != "偶遇一句话" || got.Contact != "seed@example.com" || got.PublicOrigin != "https://example.com" || got.RepoURL != "https://github.com/x/y" {
+		t.Fatalf("seeded=%+v", got)
+	}
+	again, err := st.EnsureSettings(ctx, store.SiteSettings{Name: "其他站", Contact: "other@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Name != "句子 API" || again.Contact != "seed@example.com" {
+		t.Fatalf("ensure overwrote existing row: %+v", again)
+	}
+	if err = st.UpsertSettings(ctx, store.SiteSettings{
+		Name: "测试站", EnglishName: "Test Site", Slogan: "每日一句", Contact: "ops@example.com", BeianText: "京ICP备1号",
+		BeianURL: "https://beian.miit.gov.cn/",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "测试站" || got.EnglishName != "Test Site" || got.Slogan != "每日一句" || got.Contact != "ops@example.com" || got.PublicOrigin != "" || got.BeianText != "京ICP备1号" {
+		t.Fatalf("updated=%+v", got)
 	}
 }

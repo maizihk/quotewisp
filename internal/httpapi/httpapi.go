@@ -70,7 +70,7 @@ func routeName(r *http.Request) string { return httpmw.RouteName(r) }
 
 func (a *api) classify(path string) string {
 	switch {
-	case path == "/api/v1/sentences/random":
+	case path == "/api/v1":
 		return path
 	case strings.HasPrefix(path, "/api/v1/sentences/") && len(path) > len("/api/v1/sentences/") && !strings.Contains(strings.TrimPrefix(path, "/api/v1/sentences/"), "/"):
 		return "/api/v1/sentences/{uuid}"
@@ -104,7 +104,7 @@ func (a *api) clientIP(next http.Handler) http.Handler {
 
 func (a *api) route(w http.ResponseWriter, r *http.Request) {
 	route := routeName(r)
-	if route == "/api/v1/sentences/random" || route == "/api/v1/sentences/{uuid}" || route == "/api/v1/categories" || route == "/internal/reload" {
+	if route == "/api/v1" || route == "/api/v1/sentences/{uuid}" || route == "/api/v1/categories" || route == "/internal/reload" {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if route == "unmatched" {
@@ -130,7 +130,7 @@ func (a *api) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch route {
-	case "/api/v1/sentences/random":
+	case "/api/v1":
 		a.random(w, r)
 	case "/api/v1/sentences/{uuid}":
 		a.byUUID(w, r)

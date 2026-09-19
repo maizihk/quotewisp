@@ -42,6 +42,8 @@ type Cache struct {
 	mu       sync.Mutex
 	building bool
 	dirty    bool
+	life     context.Context
+	wg       *sync.WaitGroup
 }
 
 // New returns a cache that must be initialized with LoadInitial before serving.
@@ -57,7 +59,19 @@ func New(src Source, logger *slog.Logger, metrics Metrics, buildTimeout time.Dur
 		logger:       logger,
 		metrics:      metrics,
 		buildTimeout: buildTimeout,
+		life:         context.Background(),
 	}
+}
+
+// Bind attaches refresh work to a service lifetime. Call before Refresh or RunPoll.
+func (c *Cache) Bind(ctx context.Context, wg *sync.WaitGroup) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.mu.Lock()
+	c.life = ctx
+	c.wg = wg
+	c.mu.Unlock()
 }
 
 // LoadInitial builds the first snapshot and must succeed before serving.
@@ -85,9 +99,22 @@ func (c *Cache) Refresh() {
 		c.mu.Unlock()
 		return
 	}
+	if c.life != nil && c.life.Err() != nil {
+		c.mu.Unlock()
+		return
+	}
 	c.building = true
+	wg := c.wg
 	c.mu.Unlock()
-	go c.runBuildLoop()
+	if wg != nil {
+		wg.Add(1)
+	}
+	go func() {
+		if wg != nil {
+			defer wg.Done()
+		}
+		c.runBuildLoop()
+	}()
 }
 
 // RunPoll checks dataset version on interval and refreshes when it changes.
@@ -123,16 +150,32 @@ func (c *Cache) RunPoll(ctx context.Context, interval time.Duration, wg *sync.Wa
 func (c *Cache) runBuildLoop() {
 	for {
 		c.mu.Lock()
-		c.dirty = false
+		parent := c.life
 		c.mu.Unlock()
+		if parent == nil {
+			parent = context.Background()
+		}
+		if parent.Err() != nil {
+			c.mu.Lock()
+			c.building = false
+			c.dirty = false
+			c.mu.Unlock()
+			return
+		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), c.buildTimeout)
+		ctx, cancel := context.WithTimeout(parent, c.buildTimeout)
 		data, err := c.buildOnce(ctx)
 		cancel()
 
 		if err != nil {
-			c.metrics.ExportFailed()
-			c.logFailure(err)
+			// Database helpers may replace context cancellation with a generic read
+			// error. The service lifetime is therefore the authoritative signal for
+			// an expected shutdown cancellation. Build deadlines and other failures
+			// still count and log normally while the service remains alive.
+			if parent.Err() == nil {
+				c.metrics.ExportFailed()
+				c.logFailure(err)
+			}
 		} else {
 			c.current.Store(data)
 			c.metrics.ExportBuilt(data.Version, len(data.ExportJSON))
@@ -140,13 +183,15 @@ func (c *Cache) runBuildLoop() {
 		}
 
 		c.mu.Lock()
-		if c.dirty {
+		stopping := c.life != nil && c.life.Err() != nil
+		if stopping || !c.dirty {
+			c.building = false
+			c.dirty = false
 			c.mu.Unlock()
-			continue
+			return
 		}
-		c.building = false
+		c.dirty = false
 		c.mu.Unlock()
-		return
 	}
 }
 

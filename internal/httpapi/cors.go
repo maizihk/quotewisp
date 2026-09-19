@@ -8,7 +8,7 @@ import (
 func (a *api) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route := routeName(r)
-		if route != "/api/v1/sentences/random" && route != "/api/v1/sentences/{uuid}" && route != "/api/v1/categories" {
+		if route != "/api/v1" && route != "/api/v1/sentences/{uuid}" && route != "/api/v1/categories" {
 			next.ServeHTTP(w, r)
 			return
 		}

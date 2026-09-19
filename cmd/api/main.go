@@ -33,6 +33,11 @@ func main() {
 		if loggerErr != nil {
 			panic(loggerErr)
 		}
+		var u usageErr
+		if errors.As(err, &u) {
+			logger.Error("command_failed", "category", "usage")
+			os.Exit(2)
+		}
 		logger.Error("command_failed", "category", safeCategory(err))
 		os.Exit(1)
 	}
@@ -45,6 +50,8 @@ func run(args []string) error {
 			return runImport(args[1:])
 		case "migrate":
 			return runMigrate(args[1:])
+		case "web":
+			return runWeb(args[1:])
 		default:
 			return errors.New("unknown command")
 		}
@@ -90,7 +97,7 @@ func runImport(args []string) error {
 		return err
 	}
 	defer db.Close()
-	if err = database.CheckSchema(ctx, db); err != nil {
+	if err = database.CheckReadSchema(ctx, db); err != nil {
 		return err
 	}
 	sum, err := importer.Run(ctx, db, data, *dry)
@@ -147,7 +154,7 @@ func runService() error {
 	startCtx, cancel := context.WithTimeout(life, c.SnapshotLoadTimeout)
 	db, err := database.Open(startCtx, c.MYSQLDSN, pool(c))
 	if err == nil {
-		err = database.CheckSchema(startCtx, db)
+		err = database.CheckReadSchema(startCtx, db)
 	}
 	if err != nil {
 		cancel()

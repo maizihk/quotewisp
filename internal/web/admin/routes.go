@@ -11,7 +11,7 @@ func (h *handler) registerRoutes() {
 
 	h.registerPost(mux, "POST /admin/logout", h.postLogout)
 
-	h.registerGet(mux, "GET /admin/{$}", h.getPending)
+	h.registerGet(mux, "GET /admin/{$}", h.getOverview)
 	h.registerGet(mux, "GET /admin/submissions", h.getSubmissionsList)
 	h.registerGet(mux, "GET /admin/submissions/{id}", h.getSubmissionDetail)
 	h.registerPost(mux, "POST /admin/submissions/{id}/approve", h.postApprove)
@@ -37,10 +37,14 @@ func (h *handler) registerRoutes() {
 	h.registerPost(mux, "POST /admin/users", h.postUserCreate)
 	h.registerPost(mux, "POST /admin/users/{id}/disable", h.postUserDisable)
 	h.registerPost(mux, "POST /admin/users/{id}/enable", h.postUserEnable)
+	h.registerGet(mux, "GET /admin/users/{id}/reset-password", h.getUserResetPassword)
 	h.registerPost(mux, "POST /admin/users/{id}/reset-password", h.postUserResetPassword)
 
 	h.registerGet(mux, "GET /admin/password", h.getPassword)
 	h.registerPost(mux, "POST /admin/password", h.postPassword)
+
+	h.registerGet(mux, "GET /admin/settings", h.getSettings)
+	h.registerPost(mux, "POST /admin/settings", h.postSettings)
 
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
 		setNoStore(w)

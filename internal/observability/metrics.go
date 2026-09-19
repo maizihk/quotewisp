@@ -16,20 +16,31 @@ import (
 // Metrics contains the bounded-cardinality application metrics. It deliberately
 // has no dependency on a Prometheus client so the HTTP stack remains standard-library only.
 type Metrics struct {
-	mu                 sync.RWMutex
-	httpRequests       map[httpKey]uint64
-	httpDuration       map[routeKey]*histogram
-	refreshTotal       map[string]uint64
-	refreshDuration    histogram
-	snapshotVersion    uint64
-	snapshotSentences  uint64
-	snapshotCategories uint64
-	snapshotLoaded     float64
-	snapshotTextBytes  uint64
-	refreshInProgress  bool
-	mysqlLastSuccess   bool
-	mysqlLastCheck     float64
-	mysqlLastSuccessAt float64
+	mu                    sync.RWMutex
+	webEnabled            bool
+	httpRequests          map[httpKey]uint64
+	httpDuration          map[routeKey]*histogram
+	refreshTotal          map[string]uint64
+	refreshDuration       histogram
+	snapshotVersion       uint64
+	snapshotSentences     uint64
+	snapshotCategories    uint64
+	snapshotLoaded        float64
+	snapshotTextBytes     uint64
+	refreshInProgress     bool
+	mysqlLastSuccess      bool
+	mysqlLastCheck        float64
+	mysqlLastSuccessAt    float64
+	webSubmissions        map[string]uint64
+	webAdminLogin         map[string]uint64
+	webReviews            map[webActionKey]uint64
+	webSentenceChanges    map[webActionKey]uint64
+	webCategoryChanges    map[webActionKey]uint64
+	webPublicVersion      uint64
+	webPublicBytes        uint64
+	webPublicBuilds       map[string]uint64
+	webPendingSubmissions int
+	webRetentionRows      map[string]uint64
 }
 
 type httpKey struct {
@@ -37,6 +48,7 @@ type httpKey struct {
 	status        int
 }
 type routeKey struct{ method, route string }
+type webActionKey struct{ action, result string }
 
 var buckets = [...]float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
 
@@ -47,8 +59,22 @@ type histogram struct {
 }
 
 func NewMetrics() *Metrics {
-	return &Metrics{httpRequests: make(map[httpKey]uint64), httpDuration: make(map[routeKey]*histogram), refreshTotal: map[string]uint64{"success": 0, "failure": 0, "canceled": 0}}
+	return &Metrics{
+		httpRequests:       make(map[httpKey]uint64),
+		httpDuration:       make(map[routeKey]*histogram),
+		refreshTotal:       map[string]uint64{"success": 0, "failure": 0, "canceled": 0},
+		webSubmissions:     make(map[string]uint64),
+		webAdminLogin:      make(map[string]uint64),
+		webReviews:         make(map[webActionKey]uint64),
+		webSentenceChanges: make(map[webActionKey]uint64),
+		webCategoryChanges: make(map[webActionKey]uint64),
+		webPublicBuilds:    make(map[string]uint64),
+		webRetentionRows:   map[string]uint64{"deleted": 0, "redacted": 0},
+	}
 }
+
+// EnableWeb activates web-only Prometheus families for this process.
+func (m *Metrics) EnableWeb() { m.mu.Lock(); m.webEnabled = true; m.mu.Unlock() }
 
 func (m *Metrics) ObserveHTTP(method, route string, status int, duration time.Duration) {
 	method = MetricMethod(method)
@@ -84,11 +110,95 @@ func MetricMethod(method string) string {
 }
 func MetricRoute(route string) string {
 	switch route {
-	case "/api/v1/sentences/random", "/api/v1/sentences/{uuid}", "/api/v1/categories", "/healthz", "/readyz", "/metrics", "/version", "/internal/reload":
+	case "/api/v1", "/api/v1/sentences/{uuid}", "/api/v1/categories", "/healthz", "/readyz", "/metrics", "/version", "/internal/reload":
 		return route
 	default:
+		if webMetricRoute(route) {
+			return route
+		}
 		return "unmatched"
 	}
+}
+
+func webMetricRoute(route string) bool {
+	switch route {
+	case "/", "/docs", "/submit", "/submit/done", "/dataset", "/dataset/sentences.json", "/dataset/LICENSE.txt", "/static/*":
+		return true
+	case "/admin/", "/admin/login", "/admin/logout", "/admin/submissions", "/admin/submissions/{id}", "/admin/submissions/{id}/approve", "/admin/submissions/{id}/reject", "/admin/sentences", "/admin/sentences/new", "/admin/sentences/{uuid}", "/admin/sentences/{uuid}/disable", "/admin/sentences/{uuid}/enable", "/admin/categories", "/admin/categories/new", "/admin/categories/{code}", "/admin/categories/{code}/disable", "/admin/categories/{code}/enable", "/admin/users", "/admin/users/{id}/reset-password", "/admin/users/{id}/disable", "/admin/users/{id}/enable", "/admin/password", "/admin/settings":
+		return true
+	default:
+		return false
+	}
+}
+
+var (
+	webSubmissionResults = map[string]struct{}{"accepted": {}, "invalid": {}, "rate_limited": {}, "queue_full": {}, "duplicate": {}, "honeypot": {}}
+	webLoginResults      = map[string]struct{}{"success": {}, "failure": {}, "rate_limited": {}}
+	webReviewActions     = map[string]struct{}{"approve": {}, "reject": {}}
+	webChangeActions     = map[string]struct{}{"create": {}, "edit": {}, "disable": {}, "enable": {}}
+	webChangeResults     = map[string]struct{}{"success": {}, "conflict": {}, "duplicate": {}, "unchanged": {}, "error": {}}
+	webBuildResults      = map[string]struct{}{"success": {}, "failure": {}}
+	webRetentionActions  = map[string]struct{}{"deleted": {}, "redacted": {}}
+)
+
+func webLabel(v string, allowed map[string]struct{}) string {
+	if _, ok := allowed[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+func (m *Metrics) WebSubmission(result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webSubmissions[webLabel(result, webSubmissionResults)]++
+}
+func (m *Metrics) WebAdminLogin(result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webAdminLogin[webLabel(result, webLoginResults)]++
+}
+func (m *Metrics) WebReview(action, result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webReviews[webActionKey{webLabel(action, webReviewActions), webLabel(result, webChangeResults)}]++
+}
+func (m *Metrics) WebSentenceChange(action, result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webSentenceChanges[webActionKey{webLabel(action, webChangeActions), webLabel(result, webChangeResults)}]++
+}
+func (m *Metrics) WebCategoryChange(action, result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webCategoryChanges[webActionKey{webLabel(action, webChangeActions), webLabel(result, webChangeResults)}]++
+}
+func (m *Metrics) WebPublicDataBuilt(result string, version uint64, bytes int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webPublicBuilds[webLabel(result, webBuildResults)]++
+	if result == "success" {
+		m.webPublicVersion = version
+		if bytes >= 0 {
+			m.webPublicBytes = uint64(bytes)
+		}
+	}
+}
+func (m *Metrics) SetWebPendingSubmissions(n int) {
+	if n < 0 {
+		n = 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webPendingSubmissions = n
+}
+func (m *Metrics) AddWebRetentionRows(action string, n int64) {
+	if n <= 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webRetentionRows[webLabel(action, webRetentionActions)] += uint64(n)
 }
 
 func (m *Metrics) SetSnapshot(version, sentences, categories, textBytes uint64, loadedAt time.Time) {
@@ -176,7 +286,77 @@ func (m *Metrics) writePrometheusLocked(w io.Writer) {
 	}
 	gauge(w, "sentence_api_mysql_last_check_timestamp_seconds", m.mysqlLastCheck)
 	gauge(w, "sentence_api_mysql_last_success_timestamp_seconds", m.mysqlLastSuccessAt)
+	if m.webEnabled {
+		writeHelp(w, "web_submissions_total", "counter", "Web submission outcomes.")
+		for _, r := range []string{"accepted", "invalid", "rate_limited", "queue_full", "duplicate", "honeypot", "other"} {
+			if n := m.webSubmissions[r]; n > 0 || r != "other" {
+				fmt.Fprintf(w, "web_submissions_total{result=%q} %d\n", r, n)
+			}
+		}
+		writeHelp(w, "web_admin_login_total", "counter", "Admin login outcomes.")
+		for _, r := range []string{"success", "failure", "rate_limited", "other"} {
+			if n := m.webAdminLogin[r]; n > 0 || r != "other" {
+				fmt.Fprintf(w, "web_admin_login_total{result=%q} %d\n", r, n)
+			}
+		}
+		writeWebActionCounter(w, "web_reviews_total", "Web review outcomes.", m.webReviews, webReviewActions, webChangeResults)
+		writeWebActionCounter(w, "web_sentence_changes_total", "Web sentence changes.", m.webSentenceChanges, webChangeActions, webChangeResults)
+		writeWebActionCounter(w, "web_category_changes_total", "Web category changes.", m.webCategoryChanges, webChangeActions, webChangeResults)
+		gauge(w, "web_public_data_version", float64(m.webPublicVersion))
+		gauge(w, "web_public_data_export_bytes", float64(m.webPublicBytes))
+		writeHelp(w, "web_public_data_builds_total", "counter", "Public data cache builds.")
+		for _, r := range []string{"success", "failure", "other"} {
+			if n := m.webPublicBuilds[r]; n > 0 || r != "other" {
+				fmt.Fprintf(w, "web_public_data_builds_total{result=%q} %d\n", r, n)
+			}
+		}
+		gauge(w, "web_pending_submissions", float64(m.webPendingSubmissions))
+		writeHelp(w, "web_retention_rows_total", "counter", "Retention cleanup rows.")
+		for _, action := range []string{"deleted", "redacted"} {
+			fmt.Fprintf(w, "web_retention_rows_total{action=%q} %d\n", action, m.webRetentionRows[action])
+		}
+	}
 	writeRuntime(w)
+}
+
+func writeWebActionCounter(w io.Writer, name, help string, counts map[webActionKey]uint64, actions, results map[string]struct{}) {
+	writeHelp(w, name, "counter", help)
+	emitted := make(map[webActionKey]bool, len(counts))
+	keys := make([]webActionKey, 0, len(counts))
+	for k, n := range counts {
+		if n == 0 {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].action == keys[j].action {
+			return keys[i].result < keys[j].result
+		}
+		return keys[i].action < keys[j].action
+	})
+	for _, k := range keys {
+		fmt.Fprintf(w, "%s{action=%q,result=%q} %d\n", name, k.action, k.result, counts[k])
+		emitted[k] = true
+	}
+	actionList := make([]string, 0, len(actions))
+	for action := range actions {
+		actionList = append(actionList, action)
+	}
+	sort.Strings(actionList)
+	resultList := make([]string, 0, len(results))
+	for result := range results {
+		resultList = append(resultList, result)
+	}
+	sort.Strings(resultList)
+	for _, action := range actionList {
+		for _, result := range resultList {
+			k := webActionKey{action, result}
+			if !emitted[k] {
+				fmt.Fprintf(w, "%s{action=%q,result=%q} 0\n", name, action, result)
+			}
+		}
+	}
 }
 func writeHelp(w io.Writer, n, t, h string) {
 	fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s %s\n", n, h, n, t)

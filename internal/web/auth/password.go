@@ -105,16 +105,16 @@ func parsePHC(phc string) (phcParams, []byte, []byte, error) {
 			return phcParams{}, nil, nil, ErrBadHash
 		}
 	}
-	if p.memory == 0 || p.time == 0 || p.threads == 0 {
+	if p.memory == 0 || p.memory > argonMemory || p.time == 0 || p.time > argonTime+1 || p.threads == 0 || p.threads > argonThreads+2 {
 		return phcParams{}, nil, nil, ErrBadHash
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil || len(salt) == 0 {
+	if err != nil || len(salt) == 0 || len(salt) > saltLen*2 {
 		return phcParams{}, nil, nil, ErrBadHash
 	}
 	hash, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(hash) == 0 {
+	if err != nil || len(hash) == 0 || len(hash) > int(argonKeyLen)*2 {
 		return phcParams{}, nil, nil, ErrBadHash
 	}
 	return p, salt, hash, nil
