@@ -2,7 +2,7 @@
 
 审计日期：2026-09-20（Asia/Shanghai）
 
-本文是发布审核记录。当前本地候选的 API/Web、性能、故障、公开浏览器、后台安全、管理员账户闭环及站点设置隔离验收均有通过证据，适合进入本地冻结候选；这不表示已完成正式 clean release 或 registry 推送。此前 Web dirty 部署与回滚记录保留在 [`docs/deployment-20260920.md`](deployment-20260920.md)，API 未变。
+本文是发布审核记录。`1.0.0-rc.1` 已部署，API/Web、性能、故障、公开浏览器、后台安全、管理员账户闭环及站点设置隔离验收均有通过证据；部署详情见 [`docs/deployment-rc1-20260920.md`](deployment-rc1-20260920.md)，API 未变。稳定版本发布和 registry 推送尚未执行；此前 dirty 部署记录保留在 [`docs/deployment-20260920.md`](deployment-20260920.md)。
 
 ## 已核实
 

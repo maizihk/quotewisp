@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-09-20）
 
-历史条目保留原始日期和结论。当前 API 隔离性能复测已通过既定阈值，详见 [`docs/performance.md`](performance.md)；数据库中断与恢复隔离演练隔离验收已通过，详见 [`docs/fault-acceptance.md`](fault-acceptance.md)。Web dirty 候选已部署，本轮公开浏览器 12 样本与 5 页 HTTP、后台 14 页只读安全验收均通过，详见 [`docs/browser-acceptance.md`](browser-acceptance.md) 和 [`docs/deployment-20260920.md`](deployment-20260920.md)。独立 MariaDB 上的投稿、审核、句子/分类状态同步 HTTP 闭环已通过，账户隔离验收见 [`docs/account-acceptance.md`](account-acceptance.md)；站点设置的隔离真实写入与四类非法 `public_origin` 校验也已通过。候选仍非正式 clean release。
+历史条目保留原始日期和结论。当前 `1.0.0-rc.1` 已部署，API 隔离性能、数据库故障、公开浏览器、后台只读安全、管理员账户和站点设置隔离验收均有通过证据，详见 [`docs/deployment-rc1-20260920.md`](deployment-rc1-20260920.md)、[`docs/browser-acceptance.md`](browser-acceptance.md) 和 [`docs/account-acceptance.md`](account-acceptance.md)。1000 字浏览器样本为拦截构造数据，未写入生产；投稿、审核及内容修改业务流仍未测。稳定版本发布和 registry 推送尚未执行。
 
 隔离管理员账户闭环（创建、重置、停用/恢复、自改密码及旧 session 失效）也已通过，详见 [`docs/account-acceptance.md`](account-acceptance.md)；该流程已与内容管理闭环分别验收。
 
