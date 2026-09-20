@@ -10,4 +10,6 @@
 
 收到 SIGTERM/SIGINT 后 readiness 会失败，后台轮询和刷新被取消，HTTP 请求在同一个 `SHUTDOWN_TIMEOUT` 内排空。超时会强制关闭连接并以失败退出。
 
+服务环境文件可安全保存在 `/home/andan/.config/quotewisp/api.env` 与 `/home/andan/.config/quotewisp/web.env`（目录 700、文件 600），分别供 API 和 Web 使用。启动容器时将 `--env-file /home/andan/.config/quotewisp/api.env` 或 `--env-file /home/andan/.config/quotewisp/web.env` 放在镜像名之前；修改文件后必须重建容器才会生效，单独 `docker restart` 不会重新读取文件。迁移使用独立账号，其凭据需在执行迁移时单独注入，不包含在这两份服务环境文件中。
+
 本机 MariaDB 11.8.9 验收可运行 `scripts/test-mariadb.sh`。脚本默认连接本机 `127.0.0.1:3306` 的 `MariaDB` 容器，只在子进程内读取已有 root 密码，不输出或保存凭证；它创建加密随机命名的专用数据库并清理。无参数时运行详细集成测试；传入参数时原样交给 `go test`，例如 `scripts/test-mariadb.sh -race ./...`。可用 `MARIADB_TEST_CONTAINER`、`GO_CMD` 和 `GOTMPDIR` 覆盖本机默认值；自定义临时目录路径应保持较短，以免 Unix socket 测试超过系统路径上限。
