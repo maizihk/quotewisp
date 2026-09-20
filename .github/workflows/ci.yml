@@ -139,23 +139,25 @@ jobs:
           SITE_CONTACT: ci@example.com
         run: |
           docker run --rm --network host -e MYSQL_DSN="$MYSQL_DSN" sentence-api:ci migrate up
+          docker run --rm --network host -e MYSQL_DSN="$MYSQL_DSN" -v "$GITHUB_WORKSPACE/testdata/sentences.json:/fixtures/sentences.json:ro" sentence-api:ci import --file /fixtures/sentences.json
           printf 'ci-password-123\n' | docker run --rm -i --network host -e MYSQL_DSN="$MYSQL_DSN" sentence-api:ci web admin create --username ciadmin --password-stdin
           cid=$(docker run -d --network host \
             -e MYSQL_DSN="$MYSQL_DSN" \
             -e WEB_SECRET_KEY="$WEB_SECRET_KEY" \
             -e SITE_CONTACT="$SITE_CONTACT" \
             -e COOKIE_SECURE=false \
-            -e HTTP_ADDR=127.0.0.1:18081 \
-            sentence-api:ci web)
+            -e HTTP_ADDR=127.0.0.1:8080 \
+            sentence-api:ci)
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:18081/readyz >/dev/null; then
+            if curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null; then
               break
             fi
             sleep 1
           done
-          curl --fail --silent http://127.0.0.1:18081/readyz >/dev/null
-          BASE=http://127.0.0.1:18081 bash scripts/smoke-web.sh
+          curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null
+          BASE=http://127.0.0.1:8080 bash scripts/smoke-web.sh
+          BASE_URL=http://127.0.0.1:8080 bash scripts/smoke.sh
 
   publish:
     name: Publish protected release tag

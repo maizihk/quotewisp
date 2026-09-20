@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE="${BASE:-http://127.0.0.1:8081}"
+BASE="${BASE:-http://127.0.0.1:8080}"
 fail=0
 SMOKE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/sentence-web-smoke.XXXXXX")"
 trap 'rm -rf "$SMOKE_TMP"' EXIT

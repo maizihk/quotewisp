@@ -9,9 +9,11 @@ go build -o sentence-api ./cmd/api
 ```
 
 ```bash
-MYSQL_DSN='migration_user:change_me@tcp(db.example:3306)/sentence_api?tls=true' ./sentence-api migrate up
-MYSQL_DSN='import_user:change_me@tcp(db.example:3306)/sentence_api?tls=true' ./sentence-api import --file testdata/sentences.json
-MYSQL_DSN='api_read_user:change_me@tcp(db.example:3306)/sentence_api?tls=true' ./sentence-api
+MYSQL_DSN='sa_test_write:change_me@tcp(db.example:3306)/sentence_api?tls=true' ./sentence-api migrate up
+MYSQL_DSN='sa_test_write:change_me@tcp(db.example:3306)/sentence_api?tls=true' ./sentence-api import --file testdata/sentences.json
+MYSQL_DSN='sa_test_write:change_me@tcp(db.example:3306)/sentence_api?tls=true' \
+WEB_SECRET_KEY='change-me-012345678901234567890123456789' SITE_CONTACT='ops@example.com' \
+./sentence-api
 ```
 
 服务默认监听 `:8080`。主要端点为 `/api/v1`、`/api/v1/sentences/{uuid}`、`/api/v1/categories`、`/healthz`、`/readyz`、`/metrics` 和 `/version`。服务启动不会自动迁移或导入。
@@ -32,14 +34,15 @@ go vet ./...
 
 ## Web 前台/后台
 
-同一二进制还提供 `web` 子命令，启动前台站点、投稿与管理员后台（默认 `:8081`）：
+同一二进制还提供 `web` 子命令，启动前台站点、投稿与管理员后台；合并服务默认监听 `:8080`，生产使用一个 `app.env` 和一个 `MYSQL_DSN`：
 
 ```bash
-WEB_SECRET_KEY='至少32字节可打印ASCII' \
-SITE_CONTACT='下架联系邮箱或说明' \
+WEB_SECRET_KEY='change-me-012345678901234567890123456789' \
+SITE_CONTACT='ops@example.com' \
 COOKIE_SECURE=false \
-MYSQL_DSN='web_write_user:change_me@tcp(db.example:3306)/sentence_api?tls=true' \
-./sentence-api web
+MYSQL_DSN='sa_test_write:change_me@tcp(db.example:3306)/sentence_api?tls=true' \
+HTTP_ADDR=:8080 \
+./sentence-api
 ```
 
 中文名称、英文名称、站点标语、公开地址、联系方式、备案等到后台「站点设置」修改；上述环境变量只在空库首次启动时写入种子。
@@ -47,20 +50,20 @@ MYSQL_DSN='web_write_user:change_me@tcp(db.example:3306)/sentence_api?tls=true' 
 创建首个管理员（密码仅通过 stdin，需 `--password-stdin`）：
 
 ```bash
-MYSQL_DSN='web_write_user:change_me@tcp(db.example:3306)/sentence_api?tls=true' \
+MYSQL_DSN='sa_test_write:change_me@tcp(db.example:3306)/sentence_api?tls=true' \
   ./sentence-api web admin create --username admin --password-stdin <<< 'your-secure-password'
 ```
 
 常用管理命令：`web admin list`、`web admin reset-password --username U --password-stdin`、`web admin enable|disable --username U`。详见 [web-spec.md](docs/web-spec.md)。
 
-部署拓扑：同一镜像、两个容器——读 API 监听 `:8080`（`./sentence-api`），web 监听 `:8081`（`./sentence-api web`）；反向代理将 `/api/*` 转发到 API 容器，其余路径转发到 web 容器。
+部署拓扑：一个 `quotewisp` 容器监听 `:8080`，同一进程提供 `/api/*` 和 Web 路由；反向代理的 `/api/*` 与 `/` 均转发到该端口。生产服务环境统一放在 `/home/andan/.config/quotewisp/app.env`，其中只配置一个 `MYSQL_DSN`。
 
-本地/CI 集成测试需设置 `MYSQL_TEST_DSN`（可创建 `sentence_api_test_%` 前缀的库）。Makefile 提供 `make smoke-web`（需 web 进程已启动，默认 `BASE=http://127.0.0.1:8081`）。
+本地/CI 集成测试需设置 `MYSQL_TEST_DSN`（可创建 `sentence_api_test_%` 前缀的库）。Makefile 提供 `make smoke-web`（需合并服务已启动，默认 `BASE=http://127.0.0.1:8080`）。
 
 Docker 示例：
 
 ```bash
-docker run --rm -e MYSQL_DSN=... -e WEB_SECRET_KEY=... -e SITE_CONTACT=... -p 8081:8081 sentence-api:tag web
+docker run --rm --env-file /home/andan/.config/quotewisp/app.env -p 8080:8080 sentence-api:tag
 ```
 
 部署、回滚和性能验证分别见 [operations.md](docs/operations.md)、[performance.md](docs/performance.md) 与 [acceptance.md](docs/acceptance.md)。

@@ -5,10 +5,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${BIN:-$ROOT/bin/sentence-api}"
-API_PORT="${API_PORT:-18082}"
-WEB_PORT="${WEB_PORT:-18083}"
-API_BASE="http://127.0.0.1:${API_PORT}"
-WEB_BASE="http://127.0.0.1:${WEB_PORT}"
+APP_PORT="${APP_PORT:-18082}"
+APP_BASE="http://127.0.0.1:${APP_PORT}"
+API_BASE="$APP_BASE"
+WEB_BASE="$APP_BASE"
 WEB_SECRET_KEY="${WEB_SECRET_KEY:-01234567890123456789012345678901}"
 SITE_CONTACT="${SITE_CONTACT:-e2e@example.com}"
 ADMIN_USER="${ADMIN_USER:-e2eadmin}"
@@ -17,8 +17,7 @@ POLL_INTERVAL="${SNAPSHOT_POLL_INTERVAL:-2s}"
 POLL_TIMEOUT="${E2E_POLL_TIMEOUT:-45}"
 FIXTURE="${FIXTURE:-$ROOT/testdata/sentences.json}"
 
-API_PID=""
-WEB_PID=""
+APP_PID=""
 DB_CREATED=0
 DB_NAME=""
 COOKIE_JAR=""
@@ -29,8 +28,7 @@ die() { log "FAIL: $*"; exit 1; }
 
 cleanup() {
   local code=$?
-  if [ -n "$API_PID" ]; then kill "$API_PID" 2>/dev/null || true; wait "$API_PID" 2>/dev/null || true; fi
-  if [ -n "$WEB_PID" ]; then kill "$WEB_PID" 2>/dev/null || true; wait "$WEB_PID" 2>/dev/null || true; fi
+  if [ -n "$APP_PID" ]; then kill "$APP_PID" 2>/dev/null || true; wait "$APP_PID" 2>/dev/null || true; fi
   if [ "$DB_CREATED" -eq 1 ] && [ -n "$DB_NAME" ]; then
     mysql_exec "DROP DATABASE IF EXISTS \`$DB_NAME\`" 2>/dev/null || true
   fi
@@ -169,22 +167,15 @@ main() {
 
   TMPDIR_E2E="$(mktemp -d)"
   COOKIE_JAR="$TMPDIR_E2E/cookies.txt"
-  API_LOG="$TMPDIR_E2E/api.log"
-  WEB_LOG="$TMPDIR_E2E/web.log"
+  APP_LOG="$TMPDIR_E2E/app.log"
 
-  log "start read API on $API_BASE (SNAPSHOT_POLL_INTERVAL=$POLL_INTERVAL)"
-  SNAPSHOT_POLL_INTERVAL="$POLL_INTERVAL" HTTP_ADDR="127.0.0.1:${API_PORT}" \
-    "$BIN" >>"$API_LOG" 2>&1 &
-  API_PID=$!
-
-  log "start web on $WEB_BASE"
+  log "start combined API and web on $APP_BASE (SNAPSHOT_POLL_INTERVAL=$POLL_INTERVAL)"
   WEB_SECRET_KEY="$WEB_SECRET_KEY" SITE_CONTACT="$SITE_CONTACT" COOKIE_SECURE=false \
-    HTTP_ADDR="127.0.0.1:${WEB_PORT}" SNAPSHOT_POLL_INTERVAL="$POLL_INTERVAL" \
-    "$BIN" web >>"$WEB_LOG" 2>&1 &
-  WEB_PID=$!
+    HTTP_ADDR="127.0.0.1:${APP_PORT}" SNAPSHOT_POLL_INTERVAL="$POLL_INTERVAL" \
+    "$BIN" >>"$APP_LOG" 2>&1 &
+  APP_PID=$!
 
-  wait_http "$API_BASE/readyz" "read API"
-  wait_http "$WEB_BASE/readyz" "web"
+  wait_http "$APP_BASE/readyz" "combined app"
 
   E2E_CONTENT="e2e-smoke-$(date +%s)-$RANDOM"
   log "GET /submit"

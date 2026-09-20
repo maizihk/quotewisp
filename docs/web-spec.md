@@ -33,7 +33,7 @@
 
 设计原则：
 
-1. **写权限只在 `sentence-web` 容器。** 读 API 容器继续用只读账号，web 容器用具备写权限的账号。同一镜像，不同启动命令和 DSN；两者可以独立重启、回滚、扩缩。
+1. **单进程统一权限。** 合并服务共用一个进程、连接池和 `MYSQL_DSN`；生产容器监听 `:8080`，API 与 Web 路由共同运行。
 2. **所有影响读结果的写入走 §6.3 版本协议。** 审核通过、句子编辑/新增/停用/恢复、分类新建/编辑/启停都在事务里先锁版本行，末尾递增一次版本；读 API 通过现有轮询自动加载，不需要通知。
 3. **投稿本身不递增版本。** 待审记录不进入快照，写它不影响读结果。
 4. **不引入前端框架、JS 构建、Redis、ORM。** 页面用 `html/template` 服务端渲染，`embed` 进二进制；前台 `site.css`、后台 `admin.css`；深浅色默认跟随系统，点过太阳/月亮后写 `localStorage`；进程内限流；一个新依赖 `golang.org/x/crypto`（argon2id）。
@@ -41,14 +41,14 @@
 
 ## 2. 部署拓扑
 
-同域不同路径。OpenResty 按前缀分流：
+当前生产使用单容器合并服务监听 `:8080`，同域不同路径共用一个进程和一个 `MYSQL_DSN`，各路径统一转发至该容器。
 
 | 路径 | 上游 |
 | --- | --- |
-| `/api/` | `sentence-api:8080` |
-| 其余全部 | `sentence-web:8081` |
+| `/api/` | `quotewisp:8080` |
+| 其余全部 | `quotewisp:8080` |
 
-以下路径在公网域名上直接拒绝（`403` 或 `404`），只允许内网访问：`/healthz`、`/readyz`、`/metrics`、`/version`、`/internal/`。两个进程各自都有这四个探针路径，容器编排通过内网端口访问，不经公网域名。
+以下路径在公网域名上直接拒绝（`403` 或 `404`），只允许内网访问：`/healthz`、`/readyz`、`/metrics`、`/version`、`/internal/`。合并进程提供这些探针路径，容器编排通过内网端口访问，不经公网域名。
 
 `/admin/` 建议在 OpenResty 层额外限制来源 IP。这是纵深防御，不替代应用层鉴权。
 
@@ -312,7 +312,7 @@ CREATE TABLE site_settings (
 
 | 路径 | 方法 | 说明 |
 | --- | --- | --- |
-| `/admin/` | GET | 后台首页。展示已发布/停用句子数、启用分类、待审与已处理投稿、近 24 小时投稿、数据集版本。读接口调用次数从读 API 进程的 `/metrics` 拉取（`API_METRICS_URL`），为该进程自启动以来的累计值，未配置或拉取失败显示 "—" |
+| `/admin/` | GET | 后台首页。展示已发布/停用句子数、启用分类、待审与已处理投稿、近 24 小时投稿、数据集版本。接口调用次数使用合并进程内统计。 |
 
 登录成功 `303` 到本页。
 
@@ -465,7 +465,7 @@ sentence-api web admin reset-password --username <name>
 
 | 环境变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `HTTP_ADDR` | 否 | `:8081` | 监听地址 |
+| `HTTP_ADDR` | 否 | `:8080` | 监听地址 |
 | `MYSQL_DSN` | 是 | 无 | 具备写权限的账号 |
 | `MYSQL_MAX_OPEN_CONNS` | 否 | `10` | |
 | `MYSQL_MAX_IDLE_CONNS` | 否 | `5` | |
@@ -475,7 +475,7 @@ sentence-api web admin reset-password --username <name>
 | `SITE_CONTACT` | 是 | 无 | 空库首次写入 `site_settings.contact` 的种子；有行后以后台设置为准 |
 | `SITE_REPO_URL` | 否 | 空 | 空库首次写入 `repo_url` 的种子 |
 | `API_BASE_URL` | 否 | 空 | 空库首次写入 `public_origin` 的种子（`http`/`https`，≤512 字节，无 query）；有行后以后台设置为准 |
-| `API_METRICS_URL` | 否 | 空 | 读 API 内网 `/metrics` 地址，供后台概况展示接口调用次数。可写 `http://127.0.0.1:8080` 或完整 `/metrics` 路径；公网域名上的 `/metrics` 应继续拒绝 |
+| `API_METRICS_URL` | — | — | 单容器不需要此变量，后台使用进程内统计。 |
 | `SUBMISSION_RATE_PER_HOUR` | 否 | `5` | 每 IP 每小时 |
 | `SUBMISSION_RATE_PER_DAY` | 否 | `20` | 每 IP 每天 |
 | `SUBMISSION_PENDING_LIMIT` | 否 | `1000` | 待审队列上限 |
@@ -517,16 +517,15 @@ sentence-api web admin reset-password --username <name>
 
 ## 13. 镜像与部署
 
-**同一个镜像，两个容器。** 不新增 Dockerfile。模板和静态资源通过 `embed` 进入现有二进制，运行阶段不复制任何文件目录，`scratch` 与非 root 要求不变。
+**同一个镜像，一个合并容器。** API 与 Web 共用一个进程、一个连接池和一个 `MYSQL_DSN`，默认监听 `:8080`。不新增 Dockerfile。模板和静态资源通过 `embed` 进入现有二进制，运行阶段不复制任何文件目录，`scratch` 与非 root 要求不变。
 
 | 容器 | 启动命令 | `MYSQL_DSN` 账号 | 端口 |
 | --- | --- | --- | --- |
-| `sentence-api` | `/sentence-api` | 只读 | 8080 |
-| `sentence-web` | `/sentence-api web` | 读写 | 8081 |
+| `quotewisp` | `/sentence-api` | 读写 | 8080 |
 
-不在一个容器内运行两个进程：`scratch` 没有 init 进程管理子进程，两者的重启、健康检查、回滚和凭证都应独立。
+单容器运行一个合并进程；API 与 Web 共用生命周期、健康检查、回滚和凭证。
 
-一个 Git 标签、一次构建、一个 digest，两个容器同时升级到同一版本，不存在读 API 与 web 之间 schema 期望不一致的窗口。CI 的 `image` 与 `publish` 任务不变；`image` 任务的运行时策略检查追加 `web` 子命令无配置时也以退出码 1 结束。
+历史验收模式使用一个 Git 标签、一次构建、一个 digest，同时升级两个容器；当前生产使用单合并容器。CI 的 `image` 与 `publish` 任务不变；`image` 任务的运行时策略检查追加 `web` 子命令无配置时也以退出码 1 结束。
 
 ## 14. 测试
 
