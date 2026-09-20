@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"log/slog"
@@ -39,6 +40,7 @@ type Deps struct {
 	CookieSecure  bool
 	OnChange      func()
 	APIMetricsURL string
+	APIUsage      func(context.Context) APIUsage
 }
 
 type handler struct {
@@ -51,6 +53,7 @@ type handler struct {
 	cookieSecure  bool
 	onChange      func()
 	apiMetricsURL string
+	apiUsage      func(context.Context) APIUsage
 	dummyHash     string
 	mux           *http.ServeMux
 	settingsMu    sync.Mutex
@@ -97,6 +100,7 @@ func New(d Deps) (http.Handler, error) {
 		cookieSecure:  d.CookieSecure,
 		onChange:      d.OnChange,
 		apiMetricsURL: d.APIMetricsURL,
+		apiUsage:      d.APIUsage,
 		dummyHash:     dummyHash,
 	}
 	h.registerRoutes()

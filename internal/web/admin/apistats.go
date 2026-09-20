@@ -13,20 +13,20 @@ import (
 
 const maxMetricsBody = 256 << 10
 
-type apiUsage struct {
+type APIUsage struct {
 	OK         bool
 	Random     uint64
 	UUID       uint64
 	Categories uint64
 }
 
-func (u apiUsage) Total() uint64 {
+func (u APIUsage) Total() uint64 {
 	return u.Random + u.UUID + u.Categories
 }
 
-func fetchAPIUsage(ctx context.Context, metricsURL string) apiUsage {
+func fetchAPIUsage(ctx context.Context, metricsURL string) APIUsage {
 	if metricsURL == "" {
-		return apiUsage{}
+		return APIUsage{}
 	}
 	client := &http.Client{
 		Timeout: 600 * time.Millisecond,
@@ -36,25 +36,25 @@ func fetchAPIUsage(ctx context.Context, metricsURL string) apiUsage {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metricsURL, nil)
 	if err != nil {
-		return apiUsage{}
+		return APIUsage{}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return apiUsage{}
+		return APIUsage{}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return apiUsage{}
+		return APIUsage{}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMetricsBody+1))
 	if err != nil || len(body) > maxMetricsBody {
-		return apiUsage{}
+		return APIUsage{}
 	}
 	return parseAPIRequestTotals(body)
 }
 
-func parseAPIRequestTotals(body []byte) apiUsage {
-	var out apiUsage
+func parseAPIRequestTotals(body []byte) APIUsage {
+	var out APIUsage
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	scanner.Buffer(make([]byte, 0, 64<<10), 256<<10)
 	for scanner.Scan() {
@@ -84,7 +84,7 @@ func parseAPIRequestTotals(body []byte) apiUsage {
 		out.OK = true
 	}
 	if scanner.Err() != nil {
-		return apiUsage{}
+		return APIUsage{}
 	}
 	return out
 }

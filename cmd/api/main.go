@@ -21,6 +21,7 @@ import (
 	"sentence-api/internal/importer"
 	"sentence-api/internal/observability"
 	"sentence-api/internal/snapshot"
+	"sentence-api/internal/web/admin"
 )
 
 var version = "dev"
@@ -140,7 +141,7 @@ func runMigrate(args []string) error {
 }
 
 func runService() error {
-	c, err := config.Load(config.ModeService)
+	c, err := config.Load(config.ModeCombined)
 	if err != nil {
 		return err
 	}
@@ -155,6 +156,9 @@ func runService() error {
 	db, err := database.Open(startCtx, c.MYSQLDSN, pool(c))
 	if err == nil {
 		err = database.CheckReadSchema(startCtx, db)
+	}
+	if err == nil {
+		err = database.CheckWriteSchema(startCtx, db)
 	}
 	if err != nil {
 		cancel()
@@ -186,7 +190,16 @@ func runService() error {
 	controller := &refreshController{life: life, loader: loader, manager: manager, metrics: metrics, logger: logger, loadTimeout: c.SnapshotLoadTimeout, stopping: &stopping, bg: &bg}
 	startReload := func(_ context.Context, force bool, cb func(bool, error)) bool { return controller.start(force, cb) }
 	h := httpapi.New(httpapi.Options{Snapshots: manager, StartReload: startReload, LifecycleContext: life, Metrics: metrics, Logger: logger, TrustedProxies: c.TrustedProxyCIDRs, CORSOrigins: c.CORSAllowedOrigins, ReloadToken: c.ReloadToken, Build: httpapi.BuildInfo{Version: version, GitCommit: gitCommit, BuildTime: buildTime}, IsStopping: stopping.Load})
-	srv := &http.Server{Addr: c.HTTPAddr, Handler: h, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
+	web, _, err := buildWebHandler(c, db, life, metrics, logger, &bg, &stopping, func() { controller.start(true, nil) }, func(context.Context) admin.APIUsage {
+		v := metrics.APIRequestTotals()
+		return admin.APIUsage{OK: v.OK, Random: v.Random, UUID: v.UUID, Categories: v.Categories}
+	})
+	if err != nil {
+		db.Close()
+		return err
+	}
+	combined := combinedHandler(h, web)
+	srv := &http.Server{Addr: c.HTTPAddr, Handler: combined, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	controller.runPoll(c.SnapshotPollInterval)
 	serveErr := make(chan error, 1)
 	go func() {

@@ -59,6 +59,20 @@ func TestMetricsBoundLabelsAndRuntime(t *testing.T) {
 	}
 }
 
+func TestAPIRequestTotalsExcludeWebRoutes(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveHTTP("GET", "/api/v1", 200, time.Millisecond)
+	m.ObserveHTTP("POST", "/api/v1", 400, time.Millisecond)
+	m.ObserveHTTP("GET", "/api/v1/sentences/{uuid}", 404, time.Millisecond)
+	m.ObserveHTTP("GET", "/api/v1/categories", 200, time.Millisecond)
+	m.ObserveHTTP("GET", "/", 200, time.Millisecond)
+	m.ObserveHTTP("GET", "/admin/", 200, time.Millisecond)
+	got := m.APIRequestTotals()
+	if !got.OK || got.Random != 2 || got.UUID != 1 || got.Categories != 1 {
+		t.Fatalf("unexpected API totals: %+v", got)
+	}
+}
+
 func TestWebMetricsBoundedAndOptional(t *testing.T) {
 	read := NewMetrics()
 	var readBuf bytes.Buffer

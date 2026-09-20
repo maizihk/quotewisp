@@ -2,21 +2,18 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"sentence-api/internal/config"
-	"sentence-api/internal/database"
 	"sentence-api/internal/httpmw"
 	"sentence-api/internal/observability"
 	"sentence-api/internal/web/admin"
@@ -41,133 +38,57 @@ func runWeb(args []string) error {
 		}
 		return errors.New("unknown web command")
 	}
-	return runWebServer()
+	return runService()
 }
 
-func runWebServer() error {
-	c, err := config.Load(config.ModeWeb)
-	if err != nil {
-		return err
-	}
-	logger, err := observability.NewJSONLogger(os.Stderr, c.LogLevel.String())
-	if err != nil {
-		return err
-	}
-	slog.SetDefault(logger)
-
-	life, stopLife := context.WithCancel(context.Background())
-	defer stopLife()
-
-	startCtx, cancelStart := context.WithTimeout(life, 30*time.Second)
-	defer cancelStart()
-	db, err := database.Open(startCtx, c.MYSQLDSN, pool(c))
-	if err == nil {
-		err = database.CheckWriteSchema(startCtx, db)
-	}
-	if err != nil {
-		if db != nil {
-			db.Close()
-		}
-		return err
-	}
-
+// buildWebHandler constructs the site against the caller's database and
+// lifecycle. It is shared by the combined server so the process has one pool
+// and one set of metrics.
+func buildWebHandler(c config.Config, db *sql.DB, life context.Context, metrics *observability.Metrics, logger *slog.Logger, bg *sync.WaitGroup, stopping *atomic.Bool, onChange func(), apiUsage func(context.Context) admin.APIUsage) (http.Handler, *publicdata.Cache, error) {
 	st := store.New(db)
-	metrics := observability.NewMetrics()
 	metrics.EnableWeb()
-
-	settings, err := st.EnsureSettings(startCtx, store.SiteSettings{
-		Name:         siteName,
-		EnglishName:  siteEnglishName,
-		Slogan:       siteSlogan,
-		Contact:      c.SiteContact,
-		PublicOrigin: c.APIBaseURL,
-		RepoURL:      c.SiteRepoURL,
-	})
+	initCtx, cancel := context.WithTimeout(life, c.SnapshotLoadTimeout)
+	defer cancel()
+	settings, err := st.EnsureSettings(initCtx, store.SiteSettings{Name: siteName, EnglishName: siteEnglishName, Slogan: siteSlogan, Contact: c.SiteContact, PublicOrigin: c.APIBaseURL, RepoURL: c.SiteRepoURL})
 	if err != nil {
-		logger.Error("site_settings_seed", "result", "failure", "error_category", operationCategory(err))
-		db.Close()
-		return errors.New("site settings seed failed")
+		return nil, nil, errors.New("site settings seed failed")
 	}
-
-	cache := publicdata.New(st, logger, webPublicDataMetrics{metrics}, 30*time.Second)
-	if err = cache.LoadInitial(startCtx); err != nil {
-		logger.Error("public_data_initial_load", "result", "failure", "error_category", operationCategory(err))
-		db.Close()
-		return errors.New("initial public data load failed")
+	cache := publicdata.New(st, logger, webPublicDataMetrics{metrics}, c.SnapshotLoadTimeout)
+	if err := cache.LoadInitial(initCtx); err != nil {
+		return nil, nil, errors.New("initial public data load failed")
 	}
-
-	site := render.Site{
-		Name:         settings.Name,
-		EnglishName:  settings.EnglishName,
-		Slogan:       settings.Slogan,
-		Contact:      settings.Contact,
-		RepoURL:      settings.RepoURL,
-		PublicOrigin: settings.PublicOrigin,
-		BeianText:    settings.BeianText,
-		BeianURL:     settings.BeianURL,
-		Version:      version,
-		AssetRev:     version + "-" + gitCommit + "-" + buildTime,
-	}
-	renderer, err := render.New(site)
+	renderer, err := render.New(render.Site{Name: settings.Name, EnglishName: settings.EnglishName, Slogan: settings.Slogan, Contact: settings.Contact, RepoURL: settings.RepoURL, PublicOrigin: settings.PublicOrigin, BeianText: settings.BeianText, BeianURL: settings.BeianURL, Version: version, AssetRev: version + "-" + gitCommit + "-" + buildTime})
 	if err != nil {
-		db.Close()
-		return err
+		return nil, nil, err
 	}
 	tokens := render.NewFormTokens([]byte(c.WebSecretKey))
 	limiter := ratelimit.New(c.SubmissionRatePerHour, c.SubmissionRatePerDay, 100000)
 	logins := auth.NewLoginLimiter(10, 5, 15*time.Minute, 100000)
-
-	publicHandler, err := public.New(public.Deps{
-		Cache:        cache,
-		Store:        st,
-		Renderer:     renderer,
-		Tokens:       tokens,
-		Limiter:      limiter,
-		Logger:       logger,
-		Metrics:      webPublicMetrics{metrics},
-		PendingLimit: c.SubmissionPendingLimit,
-	})
+	pub, err := public.New(public.Deps{Cache: cache, Store: st, Renderer: renderer, Tokens: tokens, Limiter: limiter, Logger: logger, Metrics: webPublicMetrics{metrics}, PendingLimit: c.SubmissionPendingLimit})
 	if err != nil {
-		db.Close()
-		return err
+		return nil, nil, err
 	}
-	adminHandler, err := admin.New(admin.Deps{
-		Store:         st,
-		Renderer:      renderer,
-		Logger:        logger,
-		Metrics:       webAdminMetrics{metrics},
-		Logins:        logins,
-		Tokens:        tokens,
-		CookieSecure:  c.CookieSecure,
-		OnChange:      cache.Refresh,
-		APIMetricsURL: c.APIMetricsURL,
-	})
+	adm, err := admin.New(admin.Deps{Store: st, Renderer: renderer, Logger: logger, Metrics: webAdminMetrics{metrics}, Logins: logins, Tokens: tokens, CookieSecure: c.CookieSecure, OnChange: func() {
+		cache.Refresh()
+		if onChange != nil {
+			onChange()
+		}
+	}, APIMetricsURL: c.APIMetricsURL, APIUsage: apiUsage})
 	if err != nil {
-		db.Close()
-		return err
+		return nil, nil, err
 	}
-
-	var stopping atomic.Bool
-	webCtl := &webController{
-		cache:    cache,
-		metrics:  metrics,
-		stopping: &stopping,
-		build: buildInfo{
-			Version:   version,
-			GitCommit: gitCommit,
-			BuildTime: buildTime,
-		},
-	}
-
+	ctl := &webController{cache: cache, metrics: metrics, stopping: stopping, build: buildInfo{Version: version, GitCommit: gitCommit, BuildTime: buildTime}}
 	root := http.NewServeMux()
-	root.HandleFunc("/healthz", webCtl.health)
-	root.HandleFunc("/readyz", webCtl.ready)
+	root.HandleFunc("/healthz", ctl.health)
+	root.HandleFunc("/readyz", ctl.ready)
 	root.Handle("/metrics", metrics.Handler())
-	root.HandleFunc("/version", webCtl.version)
-	root.Handle("/admin/", adminHandler)
-	root.Handle("/admin", adminHandler)
-	root.Handle("/", publicHandler)
-
+	root.HandleFunc("/version", ctl.version)
+	root.Handle("/admin/", adm)
+	root.Handle("/admin", adm)
+	root.Handle("/", pub)
+	cache.Bind(life, bg)
+	cache.RunPoll(life, c.SnapshotPollInterval, bg)
+	ctl.runRetention(life, c, st, limiter, logger, bg)
 	classify := func(r *http.Request) string {
 		path := r.URL.Path
 		if strings.HasPrefix(path, "/admin") {
@@ -184,59 +105,18 @@ func runWebServer() error {
 		renderer.Error(w, r, http.StatusInternalServerError, "internal-error", "内部错误", "请求处理失败")
 	}
 	handler := httpmw.RequestID(httpmw.ClientIP(c.TrustedProxyCIDRs, httpmw.Access(logger, metrics, classify, httpmw.Recover(logger, onPanic)(render.SecurityHeaders(root)))))
+	return handler, cache, nil
+}
 
-	srv := &http.Server{
-		Addr:              c.HTTPAddr,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    64 << 10,
-	}
-
-	var bg sync.WaitGroup
-	cache.Bind(life, &bg)
-	cache.RunPoll(life, c.SnapshotPollInterval, &bg)
-	webCtl.runRetention(life, c, st, limiter, logger, &bg)
-
-	serveErr := make(chan error, 1)
-	go func() {
-		e := srv.ListenAndServe()
-		if errors.Is(e, http.ErrServerClosed) {
-			e = nil
+func combinedHandler(api, web http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if strings.HasPrefix(p, "/api/") || p == "/healthz" || p == "/readyz" || p == "/metrics" || p == "/version" || p == "/internal/reload" {
+			api.ServeHTTP(w, r)
+			return
 		}
-		serveErr <- e
-	}()
-	logger.Info("web_started", "addr", c.HTTPAddr, "version", version)
-
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(signals)
-
-	var listenErr error
-	select {
-	case e := <-serveErr:
-		listenErr = e
-	case <-signals:
-	}
-
-	stopping.Store(true)
-	deadline, cancelShutdown := context.WithTimeout(context.Background(), c.ShutdownTimeout)
-	defer cancelShutdown()
-	stopLife()
-	result := shutdownAll(deadline, srv, &bg, db.Close)
-	logger.Info("web_stopped")
-	if listenErr != nil {
-		return listenErr
-	}
-	if result.http != nil {
-		if errors.Is(result.http, context.DeadlineExceeded) {
-			return errors.New("shutdown timeout")
-		}
-		return errors.New("HTTP shutdown failed")
-	}
-	return result.db
+		web.ServeHTTP(w, r)
+	})
 }
 
 type buildInfo struct {

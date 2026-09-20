@@ -39,6 +39,31 @@ func TestParseAPIRequestTotalsReachableWithoutSamples(t *testing.T) {
 	}
 }
 
+func TestAPIUsageCallbackTakesPriority(t *testing.T) {
+	h := &handler{
+		apiMetricsURL: "http://127.0.0.1:1/unreachable",
+		apiUsage: func(context.Context) APIUsage {
+			return APIUsage{OK: true, Random: 7, UUID: 2, Categories: 3}
+		},
+	}
+	got := h.apiUsageFor(context.Background())
+	if got.Random != 7 || got.UUID != 2 || got.Categories != 3 || !got.OK {
+		t.Fatalf("callback was not used: %+v", got)
+	}
+}
+
+func TestAPIUsageFallsBackToMetricsURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("# TYPE sentence_api_http_requests_total counter\n" +
+			"sentence_api_http_requests_total{method=\"GET\",route=\"/api/v1\",status=\"200\"} 4\n"))
+	}))
+	defer srv.Close()
+	got := (&handler{apiMetricsURL: srv.URL}).apiUsageFor(context.Background())
+	if !got.OK || got.Random != 4 || got.Total() != 4 {
+		t.Fatalf("fallback failed: %+v", got)
+	}
+}
+
 func TestFetchAPIUsageRejectsRedirectAndOversize(t *testing.T) {
 	t.Run("redirect", func(t *testing.T) {
 		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

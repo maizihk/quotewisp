@@ -18,6 +18,52 @@ func TestModesAndDefaults(t *testing.T) {
 		t.Fatalf("bad defaults: %#v", c)
 	}
 }
+
+func TestCombinedDefaultsAndWebRequirements(t *testing.T) {
+	base := map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
+	c, err := load(ModeCombined, env(base))
+	if err != nil || c.HTTPAddr != ":8080" || c.MySQLMaxOpenConns != 10 || c.SnapshotLoadTimeout != 30*time.Second {
+		t.Fatalf("combined defaults: %v %#v", err, c)
+	}
+	for _, key := range []string{"WEB_SECRET_KEY", "SITE_CONTACT"} {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		delete(m, key)
+		if _, err := load(ModeCombined, env(m)); err == nil {
+			t.Fatalf("combined accepted missing %s", key)
+		}
+	}
+	bad := map[string]string{}
+	for k, v := range base {
+		bad[k] = v
+	}
+	bad["CORS_ALLOWED_ORIGINS"] = "https://*.example.com"
+	if _, err := load(ModeCombined, env(bad)); err == nil {
+		t.Fatal("combined accepted invalid CORS")
+	}
+}
+
+func TestCombinedServiceValidation(t *testing.T) {
+	base := map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
+	for _, patch := range []map[string]string{
+		{"SNAPSHOT_LOAD_TIMEOUT": "0s"}, {"SNAPSHOT_LOAD_TIMEOUT": "garbage"},
+		{"RELOAD_TOKEN": "contains whitespace and is long enough 12345678901234567890"},
+		{"MYSQL_MAX_IDLE_CONNS": "11", "MYSQL_MAX_OPEN_CONNS": "10"},
+	} {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range patch {
+			m[k] = v
+		}
+		if _, err := load(ModeCombined, env(m)); err == nil {
+			t.Fatalf("combined accepted %#v", patch)
+		}
+	}
+}
 func TestImportValidatesPool(t *testing.T) {
 	_, e := load(ModeImport, env(map[string]string{"MYSQL_DSN": "x/db", "MYSQL_MAX_OPEN_CONNS": "0"}))
 	if e == nil {

@@ -21,6 +21,7 @@ const (
 	ModeMigrate
 	ModeWeb
 	ModeWebAdmin
+	ModeCombined
 )
 
 type Config struct {
@@ -57,7 +58,7 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 	if c.MYSQLDSN, err = required(lookup, "MYSQL_DSN"); err != nil {
 		return c, err
 	}
-	if mode == ModeService {
+	if mode == ModeService || mode == ModeCombined {
 		if c.HTTPAddr, err = str(lookup, "HTTP_ADDR", c.HTTPAddr, false); err != nil {
 			return c, err
 		}
@@ -67,7 +68,7 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 			return c, fmt.Errorf("HTTP_ADDR port is invalid")
 		}
 	}
-	if mode == ModeService || mode == ModeImport || mode == ModeWeb || mode == ModeWebAdmin {
+	if mode == ModeService || mode == ModeCombined || mode == ModeImport || mode == ModeWeb || mode == ModeWebAdmin {
 		if c.MySQLMaxOpenConns, err = integer(lookup, "MYSQL_MAX_OPEN_CONNS", 10, 1); err != nil {
 			return c, err
 		}
@@ -81,8 +82,12 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 			return c, err
 		}
 	}
-	if mode == ModeWeb {
-		if c.HTTPAddr, err = str(lookup, "HTTP_ADDR", ":8081", false); err != nil {
+	if mode == ModeWeb || mode == ModeCombined {
+		defaultAddr := ":8081"
+		if mode == ModeCombined {
+			defaultAddr = ":8080"
+		}
+		if c.HTTPAddr, err = str(lookup, "HTTP_ADDR", defaultAddr, false); err != nil {
 			return c, err
 		}
 		if _, port, e := net.SplitHostPort(c.HTTPAddr); e != nil {
@@ -138,7 +143,8 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 		if c.ShutdownTimeout, err = duration(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second); err != nil {
 			return c, err
 		}
-	} else if mode == ModeService {
+	}
+	if mode == ModeService || mode == ModeCombined {
 		if c.SnapshotPollInterval, err = duration(lookup, "SNAPSHOT_POLL_INTERVAL", time.Minute); err != nil {
 			return c, err
 		}

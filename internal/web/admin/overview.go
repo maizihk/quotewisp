@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 
 	"sentence-api/internal/web/store"
@@ -9,7 +10,7 @@ import (
 type overviewPageData struct {
 	basePageData
 	Overview store.Overview
-	API      apiUsage
+	API      APIUsage
 }
 
 func (h *handler) getOverview(w http.ResponseWriter, r *http.Request) {
@@ -19,9 +20,17 @@ func (h *handler) getOverview(w http.ResponseWriter, r *http.Request) {
 		h.renderer.Error(w, r, http.StatusInternalServerError, "internal-error", "内部错误", "加载概况失败")
 		return
 	}
+	usage := h.apiUsageFor(r.Context())
 	h.renderPage(w, r, []string{pageFile("overview")}, "overview", http.StatusOK, overviewPageData{
 		basePageData: h.baseData(r.Context()),
 		Overview:     overview,
-		API:          fetchAPIUsage(r.Context(), h.apiMetricsURL),
+		API:          usage,
 	})
+}
+
+func (h *handler) apiUsageFor(ctx context.Context) APIUsage {
+	if h.apiUsage != nil {
+		return h.apiUsage(ctx)
+	}
+	return fetchAPIUsage(ctx, h.apiMetricsURL)
 }

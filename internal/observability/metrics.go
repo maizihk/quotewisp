@@ -43,6 +43,16 @@ type Metrics struct {
 	webRetentionRows      map[string]uint64
 }
 
+// APIRequestTotals is the in-process view of API request counters used by the
+// admin overview when API and web handlers share one process. It intentionally
+// contains only API routes; web and admin requests are not folded into it.
+type APIRequestTotals struct {
+	OK         bool
+	Random     uint64
+	UUID       uint64
+	Categories uint64
+}
+
 type httpKey struct {
 	method, route string
 	status        int
@@ -88,6 +98,26 @@ func (m *Metrics) ObserveHTTP(method, route string, status int, duration time.Du
 		m.httpDuration[routeKey{method, route}] = h
 	}
 	h.observe(duration.Seconds())
+}
+
+// APIRequestTotals returns counters for all observed statuses on the public API
+// routes. This preserves the Prometheus-based overview semantics without an
+// in-process HTTP round trip.
+func (m *Metrics) APIRequestTotals() APIRequestTotals {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := APIRequestTotals{OK: true}
+	for key, count := range m.httpRequests {
+		switch key.route {
+		case "/api/v1":
+			out.Random += count
+		case "/api/v1/sentences/{uuid}":
+			out.UUID += count
+		case "/api/v1/categories":
+			out.Categories += count
+		}
+	}
+	return out
 }
 func (h *histogram) observe(v float64) {
 	h.Count++
