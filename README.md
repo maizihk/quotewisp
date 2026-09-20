@@ -66,6 +66,8 @@ docker compose config -q
 docker compose up -d
 ```
 
+云端部署使用 DockerHub 私有仓库（镜像为 Linux `amd64`）。先执行 `docker login` 完成认证，再在 Compose 目录执行 `docker compose pull` 和 `docker compose up -d`；更新版本时重新 pull 后使用 `docker compose up -d --force-recreate`。
+
 目录权限设为 `700`，`.env` 设为 `600`。Go 进程只读取注入的环境变量，`.env` 由 Compose 的 `env_file` 注入，不会被 Go 自动读取。`.env` 中的值不要加包裹引号；密码中的 `$` 按 literal 保留。Compose 的 `env_file` raw 格式要求 Compose `>=2.30`。修改 `.env` 后使用 `docker compose up -d --force-recreate` 使环境变量生效，不要只执行 `docker restart`。只运行一个 app 服务，复用已存在的外部 `1panel-network`，不创建数据库或 Nginx。
 
 部署、回滚和性能验证分别见 [operations.md](docs/operations.md)、[performance.md](docs/performance.md) 与 [acceptance.md](docs/acceptance.md)。
