@@ -10,4 +10,4 @@
 
 生产切换后，写入成功会主动刷新 API 与 Web 两个缓存；版本轮询用于处理外部更新。旧 `api.env` 与 `web.env` 仅保留为历史归档，不能直接作为当前回滚配置。
 
-Compose 启动方式迁移已完成：`/home/andan/deploy/quotewisp` 放置 `compose.yaml` 和 `.env`（目录 700、`.env` 600），并已通过 `docker compose config -q` 与启动核验。更新 `.env` 后执行 `docker compose up -d --force-recreate`。当前只运行一个 app 服务，复用外部 `1panel-network`，不创建数据库或 Nginx。迁移状态位于 `/home/andan/deploy/quotewisp/migration-state.json`；一次性回滚容器为 `quotewisp-rollback-086f29f26c23442dafdfac788d398564`，已停止且 `restart=no`。旧 `app.env` 仅保留为历史/旧回滚配置，旧 RC1 回滚记录同样属于历史记录。
+Compose 启动方式迁移已完成：`/home/andan/deploy/quotewisp` 放置 `compose.yaml` 和 `.env`（目录 700、`.env` 600），并已通过 `docker compose config -q` 与启动核验。更新 `.env` 后执行 `docker compose up -d --force-recreate`。当前只运行一个 app 服务，复用外部 `1panel-network`，不创建数据库或 Nginx。迁移状态位于 `/home/andan/deploy/quotewisp/migration-state.json`；一次性回滚容器已清理，不能直接启动历史容器。需要回滚时，使用保留的 RC1 镜像和统一 `app.env` 重建容器。旧 `app.env` 与 migration-state 仅保留为历史/旧回滚记录。
