@@ -589,12 +589,11 @@ GET /version
 
 ### 11.3 CORS
 
-- 默认关闭，不返回允许跨域的响应头；CORS 不作为服务端鉴权措施。
-- `CORS_ALLOWED_ORIGINS` 仅接受明确的 HTTP/HTTPS origin 列表，不能包含路径、查询、片段、用户信息、`null` 或 `*`。
-- 只对 `/api/v1` 路由启用 CORS，内部 reload、健康、版本和指标接口不开放 CORS。
-- 实际跨域读取中，来源匹配才添加 `Access-Control-Allow-Origin`；来源不匹配时按普通请求处理但不授予跨域读取权限。
+- 默认允许所有网站访问公开 API（等价于 `*`），无需配置白名单；CORS 不作为服务端鉴权措施，且不携带 credentials。
+- `CORS_ALLOWED_ORIGINS` 可选，用于把公开 API 限制为明确的 HTTP/HTTPS origin 列表；不能包含路径、查询、片段、用户信息、`null` 或显式 `*`。未设置或为空时默认返回 `*`；显式白名单时仅匹配来源返回该 origin。
+- 只对 `/api/v1`、`/api/v1/categories` 和 `/api/v1/sentences/{uuid}` 路由启用 CORS，内部 reload、健康、版本和指标接口不开放 CORS。
 - 预检仅允许 `GET`、`HEAD` 和请求头 `Accept`、`Content-Type`，头名比较不区分大小写。不启用 credentials。
-- 来源、请求方法或请求头不被允许的预检返回 `403`；CORS 关闭时预检同样不被允许。
+- 来源、请求方法或请求头不被允许的预检返回 `403`；预检只接受 `GET`、`HEAD` 以及 `Accept`、`Content-Type` 请求头。
 - 普通、不带 CORS 预检头的 `OPTIONS` 返回 `204` 和 `Allow`。
 - 正确设置 `Vary: Origin`；预检额外包含 `Access-Control-Request-Method` 和 `Access-Control-Request-Headers`，不能覆盖已有的 `Vary` 值。
 - `Access-Control-Expose-Headers` 包含 `X-Request-ID`，使允许的前端可以读取请求 ID。
@@ -621,7 +620,7 @@ GET /version
 | `SNAPSHOT_LOAD_TIMEOUT` | 否 | `30s` | 单次检查或加载的期限 |
 | `IMPORT_TIMEOUT` | 否 | `120s` | 导入校验与数据库操作总期限 |
 | `RELOAD_TOKEN` | 否 | 空 | 配置后注册手动刷新路由 |
-| `CORS_ALLOWED_ORIGINS` | 否 | 空 | 逗号分隔的明确 origin 列表 |
+| `CORS_ALLOWED_ORIGINS` | 否 | 空（允许所有公开 API origin） | 逗号分隔的明确 origin 列表；设置后限制公开 API 来源 |
 | `TRUSTED_PROXY_CIDRS` | 否 | 空 | 逗号分隔的可信代理网段 |
 | `LOG_LEVEL` | 否 | `info` | `debug`、`info`、`warn`、`error` |
 | `SHUTDOWN_TIMEOUT` | 否 | `10s` | 正数退出总时限 |

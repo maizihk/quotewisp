@@ -21,7 +21,7 @@ DATA_DIR=./data COOKIE_SECURE=false ./sentence-api
 
 随机与 UUID 查询使用统一的语句结构：`uuid`、`content`、`category`、`source`、`author`、`length`；响应不公开数据库内部 `id`。精确数据集版本位于字符串形式的 `meta.dataset_version`。
 
-完整的参数、方法、响应、错误、CORS、reload 和健康检查规则见 [开发规格](docs/development-spec.md)；导入 JSON 字段、严格校验、去重、冲突与事务语义见 [导入格式](docs/import-format.md)。
+公开 API 默认允许所有网站跨域访问（不携带 credentials），也可用 `CORS_ALLOWED_ORIGINS` 配置明确白名单。完整的参数、方法、响应、错误、CORS、reload 和健康检查规则见 [开发规格](docs/development-spec.md)；导入 JSON 字段、严格校验、去重、冲突与事务语义见 [导入格式](docs/import-format.md)。
 
 开发检查：
 

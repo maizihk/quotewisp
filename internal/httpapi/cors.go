@@ -19,23 +19,32 @@ func (a *api) cors(next http.Handler) http.Handler {
 			return
 		}
 		_, allowed := a.origins[origin]
+		public := len(a.origins) == 0
 		preflight := r.Method == "OPTIONS" && r.Header.Get("Access-Control-Request-Method") != ""
 		if preflight {
 			addVary(w.Header(), "Access-Control-Request-Method")
 			addVary(w.Header(), "Access-Control-Request-Headers")
-			if !allowed || !allowedPreflight(r) {
+			if (!allowed && !public) || !allowedPreflight(r) {
 				problem(w, r, 403, "跨域请求被拒绝", "cors-denied", "跨域预检不被允许")
 				return
 			}
-			w.Header().Set("Access-Control-Allow-Origin", origin)
+			if public {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD")
 			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
 			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
 			next.ServeHTTP(w, r)
 			return
 		}
-		if allowed {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
+		if allowed || public {
+			if public {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
 			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
 		}
 		next.ServeHTTP(w, r)

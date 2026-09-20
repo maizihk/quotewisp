@@ -150,7 +150,7 @@
 <li>所有服务可控响应包含 <code>X-Request-ID</code>；业务接口返回 <code>Cache-Control: no-store</code>。</li>
 <li><code>GET</code> 成功响应使用 <code>application/json</code>。读取路由允许 <code>GET</code>、<code>HEAD</code>、<code>OPTIONS</code>；<code>GET</code> 和 <code>HEAD</code> 不接受请求体。</li>
 <li><code>HEAD</code> 执行相同校验但不返回响应体；普通 <code>OPTIONS</code> 返回 204 和 <code>Allow</code>。</li>
-<li>跨域默认不开放。允许的 origin 由部署方配置；预检仅接受 <code>GET</code>、<code>HEAD</code> 及请求头 <code>Accept</code>、<code>Content-Type</code>。</li>
+<li>公开 API 可直接跨域请求，无需凭据。设置 <code>CORS_ALLOWED_ORIGINS</code> 后可限制来源；预检仅接受 <code>GET</code>、<code>HEAD</code> 及请求头 <code>Accept</code>、<code>Content-Type</code>。</li>
 </ul>
 </section>
 </article>
