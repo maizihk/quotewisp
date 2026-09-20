@@ -220,4 +220,5 @@ jobs:
             GIT_COMMIT=${{ github.sha }}
             BUILD_TIME=${{ steps.metadata.outputs.build_time }}
       - name: Record immutable image digest
-        run: echo "Image digest: ${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "Image digest: ${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
