@@ -166,12 +166,15 @@ main() {
   printf '%s\n' "$ADMIN_PASS" | "$BIN" web admin create --username "$ADMIN_USER" --password-stdin >/dev/null
 
   TMPDIR_E2E="$(mktemp -d)"
+  mkdir -p "$TMPDIR_E2E/data"
+  chmod 700 "$TMPDIR_E2E/data"
+  if [ "$(id -u)" -eq 0 ]; then chown 65532:65532 "$TMPDIR_E2E/data"; fi
   COOKIE_JAR="$TMPDIR_E2E/cookies.txt"
   APP_LOG="$TMPDIR_E2E/app.log"
 
   log "start combined API and web on $APP_BASE (SNAPSHOT_POLL_INTERVAL=$POLL_INTERVAL)"
   WEB_SECRET_KEY="$WEB_SECRET_KEY" SITE_CONTACT="$SITE_CONTACT" COOKIE_SECURE=false \
-    HTTP_ADDR="127.0.0.1:${APP_PORT}" SNAPSHOT_POLL_INTERVAL="$POLL_INTERVAL" \
+    HTTP_ADDR="127.0.0.1:${APP_PORT}" DATA_DIR="$TMPDIR_E2E/data" SNAPSHOT_POLL_INTERVAL="$POLL_INTERVAL" \
     "$BIN" >>"$APP_LOG" 2>&1 &
   APP_PID=$!
 

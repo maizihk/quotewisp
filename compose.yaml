@@ -1,6 +1,6 @@
 services:
   quotewisp:
-    image: ${QUOTEWISP_IMAGE:-sentence-api:1.0.0-rc.2}
+    image: sentence-api:1.0.0-rc.3
     container_name: quotewisp
     restart: unless-stopped
     stop_grace_period: 15s
@@ -9,11 +9,13 @@ services:
       - path: ./.env
         format: raw
     ports:
-      - "${QUOTEWISP_BIND_IP:-172.16.99.100}:${QUOTEWISP_HOST_PORT:-18080}:8080"
+      - "18080:8080"
+    volumes:
+      - ./data:/var/lib/quotewisp
     networks:
-      - onepanel
+      - onepanel-network
 
 networks:
-  onepanel:
-    name: ${QUOTEWISP_NETWORK:-1panel-network}
+  onepanel-network:
+    name: 1panel-network
     external: true

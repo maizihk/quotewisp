@@ -880,3 +880,26 @@ func TestSiteSettingsEnsureAndUpsert(t *testing.T) {
 		t.Fatalf("updated=%+v", got)
 	}
 }
+
+func TestSiteSettingsEnsureAllowsEmptyContactAndPreservesExisting(t *testing.T) {
+	sqlDB := testdb.Open(t)
+	st := store.New(sqlDB)
+	ctx := context.Background()
+	first, err := st.EnsureSettings(ctx, store.SiteSettings{Name: "无联系方式"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Contact != "" {
+		t.Fatalf("initial empty contact became %q", first.Contact)
+	}
+	if err := st.UpsertSettings(ctx, store.SiteSettings{Name: "已有联系方式", Contact: "owner@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.EnsureSettings(ctx, store.SiteSettings{Name: "启动默认值", Contact: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "已有联系方式" || got.Contact != "owner@example.com" {
+		t.Fatalf("ensure overwrote existing contact: %+v", got)
+	}
+}

@@ -17,3 +17,5 @@ scripts
 README.md
 Makefile
 Dockerfile*
+repo.cache
+data

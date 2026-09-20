@@ -134,19 +134,24 @@ jobs:
         run: docker run --rm sentence-api:ci web admin --help >/dev/null
       - name: Web container smoke
         env:
-          MYSQL_DSN: test:test@tcp(127.0.0.1:3306)/sentence_api?parseTime=true&multiStatements=true&charset=utf8mb4
-          WEB_SECRET_KEY: 01234567890123456789012345678901
-          SITE_CONTACT: ci@example.com
+          DB_HOST: 127.0.0.1
+          DB_NAME: sentence_api
+          DB_USER: test
+          DB_PASSWORD: test
         run: |
-          docker run --rm --network host -e MYSQL_DSN="$MYSQL_DSN" sentence-api:ci migrate up
-          docker run --rm --network host -e MYSQL_DSN="$MYSQL_DSN" -v "$GITHUB_WORKSPACE/testdata/sentences.json:/fixtures/sentences.json:ro" sentence-api:ci import --file /fixtures/sentences.json
-          printf 'ci-password-123\n' | docker run --rm -i --network host -e MYSQL_DSN="$MYSQL_DSN" sentence-api:ci web admin create --username ciadmin --password-stdin
+          data_dir="$RUNNER_TEMP/quotewisp-data"
+          mkdir -p "$data_dir"
+          chmod 700 "$data_dir"
+          sudo chown 65532:65532 "$data_dir"
+          db_args=(-e DB_HOST="$DB_HOST" -e DB_NAME="$DB_NAME" -e DB_USER="$DB_USER" -e DB_PASSWORD="$DB_PASSWORD")
+          docker run --rm --network host "${db_args[@]}" sentence-api:ci migrate up
+          docker run --rm --network host "${db_args[@]}" -v "$GITHUB_WORKSPACE/testdata/sentences.json:/fixtures/sentences.json:ro" sentence-api:ci import --file /fixtures/sentences.json
+          printf 'ci-password-123\n' | docker run --rm -i --network host "${db_args[@]}" sentence-api:ci web admin create --username ciadmin --password-stdin
           cid=$(docker run -d --network host \
-            -e MYSQL_DSN="$MYSQL_DSN" \
-            -e WEB_SECRET_KEY="$WEB_SECRET_KEY" \
-            -e SITE_CONTACT="$SITE_CONTACT" \
+            "${db_args[@]}" \
             -e COOKIE_SECURE=false \
             -e HTTP_ADDR=127.0.0.1:8080 \
+            -v "$data_dir:/var/lib/quotewisp" \
             sentence-api:ci)
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 60); do
@@ -156,6 +161,16 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null
+          docker cp "$cid:/var/lib/quotewisp/web-secret.key" "$RUNNER_TEMP/key.before"
+          key_before=$(sha256sum "$RUNNER_TEMP/key.before" | cut -d' ' -f1)
+          test -n "$key_before"
+          docker rm -f "$cid" >/dev/null
+          cid=$(docker run -d --network host "${db_args[@]}" -e COOKIE_SECURE=false -e HTTP_ADDR=127.0.0.1:8080 -v "$data_dir:/var/lib/quotewisp" sentence-api:ci)
+          for i in $(seq 1 60); do curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null && break || sleep 1; done
+          curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null
+          docker cp "$cid:/var/lib/quotewisp/web-secret.key" "$RUNNER_TEMP/key.after"
+          key_after=$(sha256sum "$RUNNER_TEMP/key.after" | cut -d' ' -f1)
+          test "$key_before" = "$key_after"
           BASE=http://127.0.0.1:8080 bash scripts/smoke-web.sh
           BASE_URL=http://127.0.0.1:8080 bash scripts/smoke.sh
 

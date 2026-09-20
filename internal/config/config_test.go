@@ -19,21 +19,48 @@ func TestModesAndDefaults(t *testing.T) {
 	}
 }
 
+func TestDatabaseEnvironment(t *testing.T) {
+	m := map[string]string{"DB_HOST": "2001:db8::1", "DB_NAME": "app", "DB_USER": "user", "DB_PASSWORD": " p@ss?&/ ", "DB_PORT": "3307", "DB_TLS": "true"}
+	c, err := load(ModeImport, env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"user: p@ss?&/ @tcp([2001:db8::1]:3307)/app", "parseTime=true", "charset=utf8mb4", "tls=true"} {
+		if !strings.Contains(c.MYSQLDSN, want) {
+			t.Fatalf("DSN %q missing %q", c.MYSQLDSN, want)
+		}
+	}
+	for _, k := range []string{"DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"} {
+		bad := map[string]string{"DB_HOST": "h", "DB_NAME": "n", "DB_USER": "u", "DB_PASSWORD": "p"}
+		delete(bad, k)
+		if _, err := load(ModeImport, env(bad)); err == nil {
+			t.Fatalf("accepted incomplete %s", k)
+		}
+	}
+	for _, p := range []string{"0", "65536", "bad"} {
+		m["DB_PORT"] = p
+		if _, err := load(ModeImport, env(m)); err == nil {
+			t.Fatalf("accepted port %s", p)
+		}
+	}
+	delete(m, "DB_PORT")
+	if _, err := load(ModeImport, env(m)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDatabaseMixingRejected(t *testing.T) {
+	m := map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "DB_HOST": "h", "DB_NAME": "n", "DB_USER": "u", "DB_PASSWORD": "p"}
+	if _, err := load(ModeImport, env(m)); err == nil {
+		t.Fatal("accepted mixed database configuration")
+	}
+}
+
 func TestCombinedDefaultsAndWebRequirements(t *testing.T) {
 	base := map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
 	c, err := load(ModeCombined, env(base))
 	if err != nil || c.HTTPAddr != ":8080" || c.MySQLMaxOpenConns != 10 || c.SnapshotLoadTimeout != 30*time.Second {
 		t.Fatalf("combined defaults: %v %#v", err, c)
-	}
-	for _, key := range []string{"WEB_SECRET_KEY", "SITE_CONTACT"} {
-		m := map[string]string{}
-		for k, v := range base {
-			m[k] = v
-		}
-		delete(m, key)
-		if _, err := load(ModeCombined, env(m)); err == nil {
-			t.Fatalf("combined accepted missing %s", key)
-		}
 	}
 	bad := map[string]string{}
 	for k, v := range base {
@@ -83,11 +110,7 @@ func TestServiceValidation(t *testing.T) {
 var webSecret = strings.Repeat("a", 32)
 
 func TestWebRequiredMissing(t *testing.T) {
-	for _, x := range []map[string]string{
-		{"WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"},
-		{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "SITE_CONTACT": "contact@example.com"},
-		{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret},
-	} {
+	for _, x := range []map[string]string{{"WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}} {
 		if _, e := load(ModeWeb, env(x)); e == nil {
 			t.Fatalf("accepted %#v", x)
 		}
@@ -112,7 +135,6 @@ func TestWebValidation(t *testing.T) {
 		{"HTTP_ADDR": "nope"},
 		{"HTTP_ADDR": ":0"},
 		{"WEB_SECRET_KEY": "short"},
-		{"SITE_CONTACT": ""},
 		{"SITE_CONTACT": strings.Repeat("x", 257)},
 		{"SITE_CONTACT": "\xff"},
 		{"COOKIE_SECURE": "yes"},

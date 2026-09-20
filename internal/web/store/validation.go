@@ -120,7 +120,7 @@ func ValidateSiteSettings(in SiteSettings) error {
 	if !validBrandText(in.Slogan, 128, 512, false) {
 		return &ValidationError{Field: "slogan", Reason: "品牌标语无效"}
 	}
-	if !utf8.ValidString(in.Contact) || in.Contact == "" || len(in.Contact) > 256 {
+	if !utf8.ValidString(in.Contact) || len(in.Contact) > 256 {
 		return &ValidationError{Field: "contact", Reason: "联系方式无效"}
 	}
 	if err := validateOptionalHTTPURL("public_origin", in.PublicOrigin, false); err != nil {

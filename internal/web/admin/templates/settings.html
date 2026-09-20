@@ -12,7 +12,7 @@
 </fieldset>
 <fieldset><legend>公开信息</legend>
 <label>站点公开地址 <input name="public_origin" type="url" maxlength="512" value="{{.Data.Form.PublicOrigin}}" placeholder="https://example.com"><span class="meta">接口文档示例中的 API 基址；留空则用相对路径</span></label>
-<label>联系方式 <input name="contact" type="text" required maxlength="256" value="{{.Data.Form.Contact}}"><span class="meta">数据页「如需下架」展示</span></label>
+<label>联系方式（可选） <input name="contact" type="text" maxlength="256" value="{{.Data.Form.Contact}}"><span class="meta">数据页「如需下架」展示</span></label>
 <label>源代码地址 <input name="repo_url" type="url" maxlength="512" value="{{.Data.Form.RepoURL}}" placeholder="https://"><span class="meta">留空则页脚不展示 GitHub 图标</span></label>
 </fieldset>
 <fieldset><legend>备案</legend>

@@ -9,7 +9,7 @@
 </section>
 <section class="dataset-details" aria-label="数据说明">
 <section><h2>来源与许可</h2><p>初始句子库来源于 <a href="https://github.com/hitokoto-osc/sentences-bundle" target="_blank" rel="noopener noreferrer">hitokoto-osc/sentences-bundle</a>，依据 GNU AGPL v3 许可使用。</p><p>本站句子库包含审核通过的用户投稿，并在相同条件下开放下载。</p><p><a href="/dataset/LICENSE.txt">阅读 GNU AGPL v3 许可全文</a></p></section>
-<section><h2>下架请求</h2><p>如需下架，请联系 <span class="contact-value">{{.Site.Contact}}</span>，并说明需要处理的内容。</p></section>
+{{if .Site.Contact}}<section><h2>下架请求</h2><p>如需下架，请联系 <span class="contact-value">{{.Site.Contact}}</span>，并说明需要处理的内容。</p></section>{{end}}
 </section>
 </div>
 {{end}}

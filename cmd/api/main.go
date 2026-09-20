@@ -145,6 +145,10 @@ func runService() error {
 	if err != nil {
 		return err
 	}
+	c.WebSecretKey, err = config.ResolveWebSecret(c.DataDir, c.WebSecretKey)
+	if err != nil {
+		return err
+	}
 	logger, err := observability.NewJSONLogger(os.Stderr, c.LogLevel.String())
 	if err != nil {
 		return err

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 type Mode uint8
@@ -27,6 +29,7 @@ const (
 type Config struct {
 	HTTPAddr               string
 	MYSQLDSN               string
+	DataDir                string
 	MySQLMaxOpenConns      int
 	MySQLMaxIdleConns      int
 	MySQLConnMaxLifetime   time.Duration
@@ -55,7 +58,8 @@ func Load(mode Mode) (Config, error) { return load(mode, os.LookupEnv) }
 func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 	c := Config{HTTPAddr: ":8080", MySQLMaxOpenConns: 10, MySQLMaxIdleConns: 5, MySQLConnMaxLifetime: 30 * time.Minute, SnapshotPollInterval: time.Minute, SnapshotLoadTimeout: 30 * time.Second, ImportTimeout: 120 * time.Second, LogLevel: slog.LevelInfo, ShutdownTimeout: 10 * time.Second}
 	var err error
-	if c.MYSQLDSN, err = required(lookup, "MYSQL_DSN"); err != nil {
+	c.DataDir = "/var/lib/quotewisp"
+	if c.MYSQLDSN, err = mysqlDSN(lookup); err != nil {
 		return c, err
 	}
 	if mode == ModeService || mode == ModeCombined {
@@ -95,10 +99,8 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 		} else if n, e := strconv.Atoi(port); e != nil || n < 1 || n > 65535 {
 			return c, fmt.Errorf("HTTP_ADDR port is invalid")
 		}
-		if c.WebSecretKey, err = required(lookup, "WEB_SECRET_KEY"); err != nil {
-			return c, err
-		}
-		if !validToken(c.WebSecretKey) {
+		c.WebSecretKey, _ = optional(lookup, "WEB_SECRET_KEY")
+		if c.WebSecretKey != "" && !validToken(c.WebSecretKey) {
 			return c, fmt.Errorf("WEB_SECRET_KEY must be 32-256 printable non-whitespace ASCII bytes")
 		}
 		if c.SiteContact, err = siteContact(lookup); err != nil {
@@ -143,6 +145,9 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 		if c.ShutdownTimeout, err = duration(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second); err != nil {
 			return c, err
 		}
+		if c.DataDir, err = str(lookup, "DATA_DIR", c.DataDir, false); err != nil {
+			return c, err
+		}
 	}
 	if mode == ModeService || mode == ModeCombined {
 		if c.SnapshotPollInterval, err = duration(lookup, "SNAPSHOT_POLL_INTERVAL", time.Minute); err != nil {
@@ -181,6 +186,81 @@ func required(l func(string) (string, bool), k string) (string, error) {
 		return "", fmt.Errorf("%s is required", k)
 	}
 	return v, nil
+}
+
+func mysqlDSN(l func(string) (string, bool)) (string, error) {
+	keys := []string{"DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"}
+	present := 0
+	vals := make(map[string]string, len(keys))
+	for _, k := range keys {
+		if v, ok := l(k); ok {
+			present++
+			vals[k] = v
+		}
+	}
+	for _, k := range []string{"DB_PORT", "DB_TLS"} {
+		if _, ok := l(k); ok {
+			present++
+		}
+	}
+	legacy, legacyOK := l("MYSQL_DSN")
+	if present == 0 {
+		if !legacyOK || legacy == "" {
+			return "", fmt.Errorf("DB_HOST, DB_NAME, DB_USER, and DB_PASSWORD are required")
+		}
+		return legacy, nil
+	}
+	basePresent := 0
+	for _, k := range keys {
+		if _, ok := l(k); ok {
+			basePresent++
+		}
+	}
+	if basePresent != len(keys) {
+		return "", fmt.Errorf("DB_HOST, DB_NAME, DB_USER, and DB_PASSWORD must be provided together")
+	}
+	if legacyOK {
+		return "", fmt.Errorf("MYSQL_DSN cannot be combined with DB_* configuration")
+	}
+	for _, k := range keys {
+		if vals[k] == "" || ((k == "DB_HOST" || k == "DB_USER" || k == "DB_NAME") && strings.TrimSpace(vals[k]) == "") {
+			if k == "DB_USER" || k == "DB_NAME" {
+				return "", fmt.Errorf("%s must not be empty", k)
+			}
+			return "", fmt.Errorf("%s is required", k)
+		}
+	}
+	host := vals["DB_HOST"]
+	if strings.ContainsAny(host, " \t\r\n[]") || strings.Contains(host, "://") {
+		return "", fmt.Errorf("DB_HOST is invalid")
+	}
+	if strings.Contains(host, ":") && net.ParseIP(host) == nil {
+		return "", fmt.Errorf("DB_HOST is invalid")
+	}
+	port := "3306"
+	if v, ok := l("DB_PORT"); ok {
+		if v == "" {
+			return "", fmt.Errorf("DB_PORT must not be empty")
+		}
+		n, e := strconv.Atoi(v)
+		if e != nil || n < 1 || n > 65535 {
+			return "", fmt.Errorf("DB_PORT is invalid")
+		}
+		port = v
+	}
+	tls, err := boolEnv(l, "DB_TLS", false)
+	if err != nil {
+		return "", err
+	}
+	mc := mysql.NewConfig()
+	mc.User, mc.Passwd, mc.DBName = vals["DB_USER"], vals["DB_PASSWORD"], vals["DB_NAME"]
+	mc.Net, mc.Addr = "tcp", net.JoinHostPort(host, port)
+	mc.ParseTime, mc.Loc = true, time.UTC
+	mc.Params = map[string]string{"charset": "utf8mb4", "time_zone": "'+00:00'"}
+	if tls {
+		mc.TLSConfig = "true"
+	}
+	return mc.FormatDSN(), nil
 }
 func optional(l func(string) (string, bool), k string) (string, bool) { return l(k) }
 func str(l func(string) (string, bool), k, d string, empty bool) (string, error) {
@@ -331,9 +411,9 @@ func boolEnv(l func(string) (string, bool), k string, d bool) (bool, error) {
 	}
 }
 func siteContact(l func(string) (string, bool)) (string, error) {
-	v, err := required(l, "SITE_CONTACT")
-	if err != nil {
-		return "", err
+	v, _ := l("SITE_CONTACT")
+	if v == "" {
+		return "", nil
 	}
 	if len(v) > 256 || !utf8.ValidString(v) {
 		return "", fmt.Errorf("SITE_CONTACT is invalid")
