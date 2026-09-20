@@ -69,3 +69,4 @@ docker compose up -d
 目录权限设为 `700`，`.env` 设为 `600`。Go 进程只读取注入的环境变量，`.env` 由 Compose 的 `env_file` 注入，不会被 Go 自动读取。`.env` 中的值不要加包裹引号；密码中的 `$` 按 literal 保留。Compose 的 `env_file` raw 格式要求 Compose `>=2.30`。修改 `.env` 后使用 `docker compose up -d --force-recreate` 使环境变量生效，不要只执行 `docker restart`。只运行一个 app 服务，复用已存在的外部 `1panel-network`，不创建数据库或 Nginx。
 
 部署、回滚和性能验证分别见 [operations.md](docs/operations.md)、[performance.md](docs/performance.md) 与 [acceptance.md](docs/acceptance.md)。
+站点图标已内置为 `/favicon.ico`，整站反向代理无需额外配置。

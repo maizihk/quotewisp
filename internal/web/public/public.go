@@ -120,6 +120,7 @@ var routeRules = []struct {
 	{regexp.MustCompile(`^/dataset/LICENSE\.txt$`), "/dataset/LICENSE.txt"},
 	{regexp.MustCompile(`^/dataset$`), "/dataset"},
 	{regexp.MustCompile(`^/static/`), "/static/*"},
+	{regexp.MustCompile(`^/favicon\.ico$`), "/favicon.ico"},
 }
 
 // RouteName returns a low-cardinality route label for metrics and access logs.

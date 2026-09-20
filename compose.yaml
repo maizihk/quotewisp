@@ -1,6 +1,6 @@
 services:
   quotewisp:
-    image: sentence-api:1.0.0-rc.4
+    image: sentence-api:1.0.0-rc.5
     container_name: quotewisp
     restart: unless-stopped
     stop_grace_period: 15s

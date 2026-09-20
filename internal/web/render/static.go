@@ -38,6 +38,9 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
+	if name == "favicon.ico" {
+		w.Header().Set("Content-Type", "image/x-icon")
+	}
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {

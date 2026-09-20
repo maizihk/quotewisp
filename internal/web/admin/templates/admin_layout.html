@@ -5,6 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{template "title" .}} · {{.Site.DisplayName}} 后台</title>
+<link rel="icon" href="/favicon.ico{{if .Site.AssetRev}}?v={{.Site.AssetRev}}{{end}}">
 <link rel="stylesheet" href="/static/admin.css{{if .Site.AssetRev}}?v={{.Site.AssetRev}}{{end}}">
 <script src="/static/theme.js{{if .Site.AssetRev}}?v={{.Site.AssetRev}}{{end}}"></script>
 </head>

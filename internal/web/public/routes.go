@@ -6,6 +6,8 @@ func (h *handler) registerRoutes() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", h.renderer.Static())
 	mux.Handle("HEAD /static/", h.renderer.Static())
+	mux.Handle("GET /favicon.ico", h.renderer.Static())
+	mux.Handle("HEAD /favicon.ico", h.renderer.Static())
 	mux.Handle("GET /assets/random.js", assetsHandler("assets/random.js", "application/javascript; charset=utf-8", "public, max-age=86400"))
 	mux.Handle("HEAD /assets/random.js", assetsHandler("assets/random.js", "application/javascript; charset=utf-8", "public, max-age=86400"))
 	mux.Handle("GET /dataset/LICENSE.txt", assetsHandler("LICENSE.txt", "text/plain; charset=utf-8", "public, max-age=86400"))
