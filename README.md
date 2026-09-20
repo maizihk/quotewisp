@@ -1,5 +1,7 @@
 # sentence-api
 
+下一阶段计划见 [SQLite 默认部署与后台导入开发计划](docs/next-development.md)。该计划尚未实现，以下说明仍对应当前发布版本。
+
 默认部署只需 `DB_HOST`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`；`DB_PORT`（默认 `3306`）和 `DB_TLS` 可选。旧 `MYSQL_DSN` 仍兼容，但不能与 `DB_*` 混用。`WEB_SECRET_KEY` 与 `SITE_CONTACT` 可省略：首次启动会在 `/var/lib/quotewisp` 自动生成并持久化密钥，联系方式可在后台设置。使用 Compose 绑定目录时按下文步骤初始化，迁移机器时须带上整个 `data` 目录。
 
 纯 Go 的只读语句 API。公开读取从原子内存快照完成，MariaDB/MySQL 只用于迁移、导入和后台刷新。当前部署验收基线为 MariaDB 11.8；MySQL 8.4 是待单独验证的兼容目标。
