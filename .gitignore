@@ -3,5 +3,6 @@
 *.test
 .env
 .env.*
+!.env.example
 .cache/
 *.prof

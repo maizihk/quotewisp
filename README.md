@@ -34,7 +34,7 @@ go vet ./...
 
 ## Web 前台/后台
 
-同一二进制还提供 `web` 子命令，启动前台站点、投稿与管理员后台；合并服务默认监听 `:8080`，生产使用一个 `app.env` 和一个 `MYSQL_DSN`：
+同一二进制还提供 `web` 子命令，启动前台站点、投稿与管理员后台；合并服务默认监听 `:8080`，生产使用 `/home/andan/deploy/quotewisp/.env` 和一个 `MYSQL_DSN`：
 
 ```bash
 WEB_SECRET_KEY='change-me-012345678901234567890123456789' \
@@ -56,14 +56,18 @@ MYSQL_DSN='sa_test_write:change_me@tcp(db.example:3306)/sentence_api?tls=true' \
 
 常用管理命令：`web admin list`、`web admin reset-password --username U --password-stdin`、`web admin enable|disable --username U`。详见 [web-spec.md](docs/web-spec.md)。
 
-部署拓扑：一个 `quotewisp` 容器监听 `:8080`，同一进程提供 `/api/*` 和 Web 路由；反向代理的 `/api/*` 与 `/` 均转发到该端口。生产服务环境统一放在 `/home/andan/.config/quotewisp/app.env`，其中只配置一个 `MYSQL_DSN`。
+部署拓扑：一个 `quotewisp` 容器监听 `:8080`，同一进程提供 `/api/*` 和 Web 路由；反向代理的 `/api/*` 与 `/` 均转发到该端口。生产部署目录为 `/home/andan/deploy/quotewisp`，其中放置 `compose.yaml` 和 `.env`。
 
 本地/CI 集成测试需设置 `MYSQL_TEST_DSN`（可创建 `sentence_api_test_%` 前缀的库）。Makefile 提供 `make smoke-web`（需合并服务已启动，默认 `BASE=http://127.0.0.1:8080`）。
 
-Docker 示例：
+Compose 部署：
 
 ```bash
-docker run --rm --env-file /home/andan/.config/quotewisp/app.env -p 8080:8080 sentence-api:tag
+cd /home/andan/deploy/quotewisp
+docker compose config -q
+docker compose up -d
 ```
+
+目录权限设为 `700`，`.env` 设为 `600`。`.env` 中的值不要加包裹引号；密码中的 `$` 按 literal 保留。Compose 的 `env_file` raw 格式要求 Compose `>=2.30`。修改 `.env` 后使用 `docker compose up -d --force-recreate` 使环境变量生效，不要只执行 `docker restart`。只运行一个 app 服务，复用已存在的外部 `1panel-network`，不创建数据库或 Nginx。
 
 部署、回滚和性能验证分别见 [operations.md](docs/operations.md)、[performance.md](docs/performance.md) 与 [acceptance.md](docs/acceptance.md)。

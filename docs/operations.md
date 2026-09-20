@@ -10,6 +10,8 @@
 
 收到 SIGTERM/SIGINT 后 readiness 会失败，后台轮询和刷新被取消，HTTP 请求在同一个 `SHUTDOWN_TIMEOUT` 内排空。超时会强制关闭连接并以失败退出。
 
-服务环境文件可安全保存在 `/home/andan/.config/quotewisp/app.env`（目录 700、文件 600），供单容器使用，包含一个 `MYSQL_DSN` 以及 Web 所需变量。旧 `api.env` 与 `web.env` 仅作为回滚归档。启动容器时将 `--env-file /home/andan/.config/quotewisp/app.env` 放在镜像名之前；修改文件后必须重建容器才会生效，单独 `docker restart` 不会重新读取 env 文件。
+当前部署目录为 `/home/andan/deploy/quotewisp`，其中放置 `compose.yaml` 与 `.env`；目录权限为 `700`，`.env` 权限为 `600`。`.env` 的值不加包裹引号，密码中的 `$` 按 literal 保留。Compose 使用 `env_file` 的 `format: raw`，要求 Compose `>=2.30`。当前镜像为 rc2，默认绑定 IP 为 `172.16.99.100`、主机端口为 `18080`、网络为外部 `1panel-network`。新机器需修改 IP、DSN 和网络，并先确保外部网络已存在。
+
+Compose 迁移已完成。在该目录执行 `docker compose config -q` 可校验配置；修改 `.env` 后执行 `docker compose up -d --force-recreate`，不要只执行 `docker restart`。当前只运行一个 app 服务，不创建数据库或 Nginx。活动环境文件为 `/home/andan/deploy/quotewisp/.env`；旧 `app.env` 仅作为历史/旧回滚配置。迁移状态和一次性回滚容器信息位于 `/home/andan/deploy/quotewisp/migration-state.json`；旧 `quotewisp-rollback-086f29f26c23442dafdfac788d398564` 已停止且 `restart=no`。
 
 本机 MariaDB 11.8.9 验收可运行 `scripts/test-mariadb.sh`。脚本默认连接本机 `127.0.0.1:3306` 的 `MariaDB` 容器，只在子进程内读取已有 root 密码，不输出或保存凭证；它创建加密随机命名的专用数据库并清理。无参数时运行详细集成测试；传入参数时原样交给 `go test`，例如 `scripts/test-mariadb.sh -race ./...`。可用 `MARIADB_TEST_CONTAINER`、`GO_CMD` 和 `GOTMPDIR` 覆盖本机默认值；自定义临时目录路径应保持较短，以免 Unix socket 测试超过系统路径上限。
