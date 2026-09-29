@@ -205,18 +205,18 @@ func TestOperationTimeoutCountsAsFailure(t *testing.T) {
 func TestDatabaseObservationValidationAndServiceCancel(t *testing.T) {
 	metrics := observability.NewMetrics()
 	life, cancel := context.WithCancel(context.Background())
-	recordMySQLOperation(metrics, life, &database.ValidationError{Reason: "bad"})
-	if !strings.Contains(metricText(metrics), "sentence_api_mysql_last_operation_success 1") {
+	recordDatabaseOperation(metrics, life, &database.ValidationError{Reason: "bad"})
+	if !strings.Contains(metricText(metrics), "sentence_api_database_last_operation_success 1") {
 		t.Fatal("validation error marked DB failure")
 	}
 	cancel()
-	recordMySQLOperation(metrics, life, context.Canceled)
-	if !strings.Contains(metricText(metrics), "sentence_api_mysql_last_operation_success 1") {
+	recordDatabaseOperation(metrics, life, context.Canceled)
+	if !strings.Contains(metricText(metrics), "sentence_api_database_last_operation_success 1") {
 		t.Fatal("service cancellation changed DB observation")
 	}
 	life2 := context.Background()
-	recordMySQLOperation(metrics, life2, errors.New("network"))
-	if !strings.Contains(metricText(metrics), "sentence_api_mysql_last_operation_success 0") {
+	recordDatabaseOperation(metrics, life2, errors.New("network"))
+	if !strings.Contains(metricText(metrics), "sentence_api_database_last_operation_success 0") {
 		t.Fatal("DB error marked success")
 	}
 }

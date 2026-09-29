@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sentence-api/internal/database"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,10 +55,8 @@ func (s *Store) ListSentences(ctx context.Context, f SentenceFilter) ([]Sentence
 		args = append(args, f.Status)
 	}
 	if f.Query != "" {
-		escape := " ESCAPE '\\\\'"
-		if database.IsSQLite(s.DB) {
-			escape = " ESCAPE '\\'"
-		}
+		escape := " ESCAPE '\\'"
+
 		where += " AND s.content LIKE ?" + escape
 		args = append(args, "%"+escapeLike(f.Query)+"%")
 	}
@@ -162,7 +159,7 @@ func (s *Store) UpdateSentence(ctx context.Context, uuid string, f SentenceField
 			code       string
 		}
 		err := tx.QueryRowContext(ctx, `SELECT s.id, s.content, s.source, s.author, s.category_id, c.code
-		FROM sentences s JOIN categories c ON c.id = s.category_id WHERE s.uuid = ?`+lockSuffix(s.DB), uuid).
+		FROM sentences s JOIN categories c ON c.id = s.category_id WHERE s.uuid = ?`, uuid).
 			Scan(&cur.id, &cur.content, &cur.source, &cur.author, &cur.categoryID, &cur.code)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrNotFound
@@ -205,7 +202,7 @@ func (s *Store) SetSentenceStatus(ctx context.Context, uuid string, from, to uin
 	}
 	return s.withVersionTx(ctx, func(tx *sql.Tx) (bool, error) {
 		var status uint8
-		err := tx.QueryRowContext(ctx, "SELECT status FROM sentences WHERE uuid = ?"+lockSuffix(s.DB), uuid).Scan(&status)
+		err := tx.QueryRowContext(ctx, "SELECT status FROM sentences WHERE uuid = ?", uuid).Scan(&status)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrNotFound
 		}

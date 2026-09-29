@@ -1,6 +1,6 @@
 # Go 语句 API 开发规格
 
-本轮增量：默认 SQLite（`DATA_DIR/quotewisp.db`）、SQLite/MySQL 自动迁移、仅新库一次性自编示例及有效空快照支持。下文保留首版规格；涉及仅 MySQL、手动迁移、空库拒绝启动和分进程部署的旧描述，以 [README](../README.md) 和 [运行与回滚](operations.md) 为准。后台文件导入仍按 [后续计划](next-development.md) 待开发；本地变更不代表旧发布镜像或历史验收结果已更新。
+当前实现仅支持 SQLite，数据库约束与部署以 [SQLite 实现说明](sqlite-only.md)、[README](../README.md) 和 [运行与回滚](operations.md) 为准。下文保留早期设计中的 API/UI 细节；MySQL 方言、账号、连接配置、迁移框架、外部数据库测试和付费发布保护章节均为已废弃的历史设计，不再适用于当前版本。后台双格式文件导入现已实现。
 
 版本：1.3\\
 状态：读 API 已实现并验证，见 [验收记录](acceptance.md)；1.3 前台、投稿与后台以实现代码和 [前台规格](web-spec.md) 为准\\

@@ -28,9 +28,9 @@ type Metrics struct {
 	snapshotLoaded        float64
 	snapshotTextBytes     uint64
 	refreshInProgress     bool
-	mysqlLastSuccess      bool
-	mysqlLastCheck        float64
-	mysqlLastSuccessAt    float64
+	databaseLastSuccess   bool
+	databaseLastCheck     float64
+	databaseLastSuccessAt float64
 	webSubmissions        map[string]uint64
 	webAdminLogin         map[string]uint64
 	webReviews            map[webActionKey]uint64
@@ -250,13 +250,13 @@ func (m *Metrics) ObserveRefresh(result string, d time.Duration) {
 	m.refreshTotal[result]++
 	m.refreshDuration.observe(d.Seconds())
 }
-func (m *Metrics) ObserveMySQL(success bool, at time.Time) {
+func (m *Metrics) ObserveDatabase(success bool, at time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mysqlLastSuccess = success
-	m.mysqlLastCheck = float64(at.UnixNano()) / 1e9
+	m.databaseLastSuccess = success
+	m.databaseLastCheck = float64(at.UnixNano()) / 1e9
 	if success {
-		m.mysqlLastSuccessAt = m.mysqlLastCheck
+		m.databaseLastSuccessAt = m.databaseLastCheck
 	}
 }
 
@@ -309,13 +309,13 @@ func (m *Metrics) writePrometheusLocked(w io.Writer) {
 	} else {
 		gauge(w, "sentence_api_snapshot_refresh_in_progress", 0)
 	}
-	if m.mysqlLastSuccess {
-		gauge(w, "sentence_api_mysql_last_operation_success", 1)
+	if m.databaseLastSuccess {
+		gauge(w, "sentence_api_database_last_operation_success", 1)
 	} else {
-		gauge(w, "sentence_api_mysql_last_operation_success", 0)
+		gauge(w, "sentence_api_database_last_operation_success", 0)
 	}
-	gauge(w, "sentence_api_mysql_last_check_timestamp_seconds", m.mysqlLastCheck)
-	gauge(w, "sentence_api_mysql_last_success_timestamp_seconds", m.mysqlLastSuccessAt)
+	gauge(w, "sentence_api_database_last_check_timestamp_seconds", m.databaseLastCheck)
+	gauge(w, "sentence_api_database_last_success_timestamp_seconds", m.databaseLastSuccessAt)
 	if m.webEnabled {
 		writeHelp(w, "web_submissions_total", "counter", "Web submission outcomes.")
 		for _, r := range []string{"accepted", "invalid", "rate_limited", "queue_full", "duplicate", "honeypot", "other"} {

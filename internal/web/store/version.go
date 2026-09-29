@@ -20,7 +20,7 @@ func (s *Store) withVersionTx(ctx context.Context, fn func(tx *sql.Tx) (changed 
 	defer tx.Rollback()
 
 	var version uint64
-	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id = 1"+lockSuffix(s.DB)).Scan(&version); err != nil || version == 0 {
+	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id = 1").Scan(&version); err != nil || version == 0 {
 		return errors.New("dataset version is missing or invalid")
 	}
 	changed, err := fn(tx)
@@ -28,13 +28,11 @@ func (s *Store) withVersionTx(ctx context.Context, fn func(tx *sql.Tx) (changed 
 		return err
 	}
 	if changed {
-		if database.IsSQLite(s.DB) && version >= uint64(1<<63-1) {
+		if version >= uint64(1<<63-1) {
 			return errors.New("dataset version exhausted")
 		}
-		stamp := "CURRENT_TIMESTAMP(6)"
-		if database.IsSQLite(s.DB) {
-			stamp = "CURRENT_TIMESTAMP"
-		}
+		stamp := "CURRENT_TIMESTAMP"
+
 		res, err := tx.ExecContext(ctx, "UPDATE dataset_versions SET version = version + 1, published_at = "+stamp+" WHERE id = 1")
 		if err != nil {
 			return errors.New("dataset version update failed")

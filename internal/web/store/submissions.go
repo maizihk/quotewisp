@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/netip"
-	"sentence-api/internal/database"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,7 +64,7 @@ func (s *Store) CreateSubmission(ctx context.Context, n NewSubmission, pendingLi
 	defer tx.Rollback()
 
 	var version uint64
-	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id = 1"+lockSuffix(s.DB)).Scan(&version); err != nil || version == 0 {
+	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id = 1").Scan(&version); err != nil || version == 0 {
 		return 0, errors.New("dataset version is missing or invalid")
 	}
 
@@ -200,7 +199,7 @@ func (s *Store) ApproveSubmission(ctx context.Context, id, adminID uint64, edit 
 			categoryCode, categoryName string
 		}
 		err := tx.QueryRowContext(ctx, `SELECT s.status, s.content, s.source, s.author, s.category_id, c.code, c.name
-		FROM submissions s JOIN categories c ON c.id = s.category_id WHERE s.id = ?`+lockSuffix(s.DB), id).
+		FROM submissions s JOIN categories c ON c.id = s.category_id WHERE s.id = ?`, id).
 			Scan(&sub.status, &sub.content, &sub.source, &sub.author, &sub.categoryID, &sub.categoryCode, &sub.categoryName)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrNotFound
@@ -277,7 +276,7 @@ func (s *Store) RejectSubmission(ctx context.Context, id, adminID uint64, reason
 	}
 	defer tx.Rollback()
 	var status uint8
-	if err = tx.QueryRowContext(ctx, "SELECT status FROM submissions WHERE id = ?"+lockSuffix(s.DB), id).Scan(&status); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, "SELECT status FROM submissions WHERE id = ?", id).Scan(&status); errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return errors.New("read submission")
@@ -359,10 +358,8 @@ func scanSubmission(row submissionScanner, withDup bool) (Submission, error) {
 }
 
 func (s *Store) exactDuplicateSentence(ctx context.Context, tx *sql.Tx, categoryID uint64, content string, excludeID uint64) error {
-	column := "BINARY content"
-	if database.IsSQLite(s.DB) {
-		column = "content COLLATE BINARY"
-	}
+	column := "content COLLATE BINARY"
+
 	var q string
 	var args []any
 	if excludeID == 0 {

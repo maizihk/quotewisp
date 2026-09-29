@@ -18,7 +18,7 @@ func sqliteTarget(t *testing.T, name string) Target {
 func openTarget(t *testing.T, target Target) (*sql.DB, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := target.Open(ctx, PoolConfig{})
+	db, err := target.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestSQLiteInitializeSeedsOnceAndPreservesEmptyDelete(t *testing.T) {
 	target := sqliteTarget(t, "quote?name#x.db")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := target.Initialize(ctx, PoolConfig{}); err != nil {
+	if err := target.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
 	db, _ := openTarget(t, target)
@@ -47,7 +47,7 @@ func TestSQLiteInitializeSeedsOnceAndPreservesEmptyDelete(t *testing.T) {
 	if categories != 1 || sentences != 1 || pending != 0 {
 		t.Fatalf("initial seed categories=%d sentences=%d pending=%d", categories, sentences, pending)
 	}
-	if err := target.Initialize(ctx, PoolConfig{}); err != nil {
+	if err := target.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var again int
@@ -60,7 +60,7 @@ func TestSQLiteInitializeSeedsOnceAndPreservesEmptyDelete(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "DELETE FROM categories"); err != nil {
 		t.Fatal(err)
 	}
-	if err := target.Initialize(ctx, PoolConfig{}); err != nil {
+	if err := target.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM categories").Scan(&categories); err != nil {
@@ -87,7 +87,7 @@ func TestSQLiteExplicitMigrateUpDoesNotSeed(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("MigrateUp seeded categories=%d", n)
 	}
-	if err := target.Initialize(ctx, PoolConfig{}); err != nil {
+	if err := target.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM categories").Scan(&n); err != nil || n != 0 {
@@ -98,7 +98,7 @@ func TestSQLiteExplicitMigrateUpDoesNotSeed(t *testing.T) {
 func TestSQLiteInitializePreservesExistingSettingsAndAdmin(t *testing.T) {
 	target := sqliteTarget(t, "preserve.db")
 	ctx := context.Background()
-	if err := target.Initialize(ctx, PoolConfig{}); err != nil {
+	if err := target.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
 	db, _ := openTarget(t, target)
@@ -111,7 +111,7 @@ func TestSQLiteInitializePreservesExistingSettingsAndAdmin(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "INSERT INTO admin_users (username,password_hash) VALUES ('admin','hash')"); err != nil {
 		t.Fatal(err)
 	}
-	if err := target.Initialize(ctx, PoolConfig{}); err != nil {
+	if err := target.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var name, hash string
@@ -136,7 +136,7 @@ func TestSQLiteConcurrentInitializeSameFile(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results <- target.Initialize(ctx, PoolConfig{})
+			results <- target.Initialize(ctx)
 		}()
 	}
 	wg.Wait()
@@ -174,7 +174,7 @@ func TestSQLiteInitializeRejectsFutureAndDirtySchemaUnchanged(t *testing.T) {
 			} else if _, err := db.ExecContext(ctx, tc.mutate); err != nil {
 				t.Fatal(err)
 			}
-			if err := target.Initialize(ctx, PoolConfig{}); err == nil {
+			if err := target.Initialize(ctx); err == nil {
 				t.Fatal("accepted unsupported schema")
 			}
 			var version uint
@@ -198,7 +198,7 @@ func TestSQLiteInterruptedInitializationResumesPendingSeed(t *testing.T) {
 	if err := target.MigrateUp(); err != nil {
 		t.Fatal(err)
 	}
-	if err := target.Initialize(ctx, PoolConfig{}); err != nil {
+	if err := target.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -209,7 +209,7 @@ func TestSQLiteInterruptedInitializationResumesPendingSeed(t *testing.T) {
 
 func TestSQLiteInitializeStartupErrorStageAndCategory(t *testing.T) {
 	target := Target{SQLitePath: "/dev/null/quotewisp.db"}
-	err := target.Initialize(context.Background(), PoolConfig{})
+	err := target.Initialize(context.Background())
 	var startup *StartupError
 	if !errors.As(err, &startup) {
 		t.Fatalf("error type=%T err=%v", err, err)

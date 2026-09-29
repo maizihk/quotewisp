@@ -159,16 +159,16 @@ type observedLoader struct {
 
 func (l observedLoader) Version(ctx context.Context) (uint64, error) {
 	v, e := l.inner.Version(ctx)
-	recordMySQLOperation(l.metrics, l.life, e)
+	recordDatabaseOperation(l.metrics, l.life, e)
 	return v, e
 }
 func (l observedLoader) Load(ctx context.Context) (*snapshot.Snapshot, error) {
 	s, e := l.inner.Load(ctx)
-	recordMySQLOperation(l.metrics, l.life, e)
+	recordDatabaseOperation(l.metrics, l.life, e)
 	return s, e
 }
 
-func recordMySQLOperation(m *observability.Metrics, life context.Context, err error) {
+func recordDatabaseOperation(m *observability.Metrics, life context.Context, err error) {
 	if life.Err() != nil {
 		return
 	}
@@ -177,7 +177,7 @@ func recordMySQLOperation(m *observability.Metrics, life context.Context, err er
 	if errors.As(err, &validation) {
 		ok = true
 	}
-	m.ObserveMySQL(ok, time.Now().UTC())
+	m.ObserveDatabase(ok, time.Now().UTC())
 }
 
 type shutdownResult struct{ http, db error }

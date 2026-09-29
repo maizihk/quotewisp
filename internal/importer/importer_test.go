@@ -108,7 +108,7 @@ func importDataset() Dataset {
 	return Dataset{InputCount: 1, Sentences: []Sentence{{UUID: "75a45fd4-4f2f-45eb-80cb-6f0a7bcdfaf2", Category: "x", Content: "a", Length: 1}}}
 }
 func expectVersion(mock sqlmock.Sqlmock) {
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM dataset_versions WHERE id=1 FOR UPDATE")).WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT version FROM dataset_versions WHERE id=1")).WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
 }
 func expectCategory(mock sqlmock.Sqlmock, rows *sqlmock.Rows) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id,code,name,enabled,sort_order FROM categories WHERE code IN (?)")).WithArgs("x").WillReturnRows(rows)

@@ -12,10 +12,10 @@ import (
 func TestSQLiteMultiBatchPreviewAndImport(t *testing.T) {
 	ctx := context.Background()
 	target := database.Target{SQLitePath: filepath.Join(t.TempDir(), "scale.db")}
-	if err := target.Initialize(ctx, database.PoolConfig{}); err != nil {
+	if err := target.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	db, err := target.Open(ctx, database.PoolConfig{})
+	db, err := target.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

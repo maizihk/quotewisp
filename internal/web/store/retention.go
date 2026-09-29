@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"sentence-api/internal/database"
 	"time"
 )
 
@@ -13,10 +12,8 @@ func (s *Store) RunRetention(ctx context.Context, before time.Time, batch int) (
 	}
 	before = before.UTC()
 	for {
-		q := "DELETE FROM submissions WHERE status = 2 AND reviewed_at < ? LIMIT ?"
-		if database.IsSQLite(s.DB) {
-			q = "DELETE FROM submissions WHERE rowid IN (SELECT rowid FROM submissions WHERE status = 2 AND reviewed_at < ? LIMIT ?)"
-		}
+		q := "DELETE FROM submissions WHERE rowid IN (SELECT rowid FROM submissions WHERE status = 2 AND reviewed_at < ? LIMIT ?)"
+
 		res, e := s.DB.ExecContext(ctx, q, before, batch)
 		if e != nil {
 			return deleted, redacted, errors.New("delete rejected submissions")
@@ -31,12 +28,8 @@ func (s *Store) RunRetention(ctx context.Context, before time.Time, batch int) (
 		}
 	}
 	for {
-		q := `UPDATE submissions SET contact = NULL, client_ip = NULL
-			WHERE status = 1 AND reviewed_at < ? AND (contact IS NOT NULL OR client_ip IS NOT NULL)
-			LIMIT ?`
-		if database.IsSQLite(s.DB) {
-			q = `UPDATE submissions SET contact = NULL, client_ip = NULL WHERE rowid IN (SELECT rowid FROM submissions WHERE status = 1 AND reviewed_at < ? AND (contact IS NOT NULL OR client_ip IS NOT NULL) LIMIT ?)`
-		}
+		q := `UPDATE submissions SET contact = NULL, client_ip = NULL WHERE rowid IN (SELECT rowid FROM submissions WHERE status = 1 AND reviewed_at < ? AND (contact IS NOT NULL OR client_ip IS NOT NULL) LIMIT ?)`
+
 		res, e := s.DB.ExecContext(ctx, q, before, batch)
 		if e != nil {
 			return deleted, redacted, errors.New("redact approved submissions")

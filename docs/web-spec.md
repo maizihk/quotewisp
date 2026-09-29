@@ -1,6 +1,6 @@
 # 前台、投稿与后台规格
 
-本轮新增默认 SQLite、自动迁移与空库启动；部署方式以 [README](../README.md) 为准。下文的 InnoDB、SQL 方言与历史迁移说明针对 MySQL/MariaDB；SQLite 使用独立 schema 和等价业务约束。后台文件导入不在本轮范围。
+当前实现仅支持 SQLite，数据库约束与部署以 [SQLite 实现说明](sqlite-only.md)、[README](../README.md) 和 [运行与回滚](operations.md) 为准。下文保留早期设计中的 API/UI 细节；MySQL 方言、账号、连接配置、迁移框架、外部数据库测试和付费发布保护章节均为已废弃的历史设计，不再适用于当前版本。后台双格式文件导入现已实现。
 
 配套开发规格版本：1.3  
 状态：已实现\\

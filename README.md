@@ -2,7 +2,7 @@
 
 纯 Go 的语句 API、投稿前台和管理后台，同一进程监听 `:8080`。公开 API 从原子内存快照读取；数据库用于持久化、后台管理和快照刷新。
 
-默认使用 SQLite，无需配置外部数据库。首次启动自动迁移并写入少量自编示例，后续启动不会重复写入；删除全部语句后仍可正常启动。SQLite 数据库 `quotewisp.db` 和自动生成的 `web-secret.key` 均位于 `DATA_DIR`（默认 `/var/lib/quotewisp`）。已有 MySQL/MariaDB 配置继续可用，启动时也会自动迁移表。
+仅支持 SQLite，无需配置外部数据库。首次启动自动迁移并写入少量自编示例，后续启动不会重复写入；删除全部语句后仍可正常启动。SQLite 数据库 `quotewisp.db` 和自动生成的 `web-secret.key` 均位于 `DATA_DIR`（默认 `/var/lib/quotewisp`）。
 
 ## 本地运行
 
@@ -41,11 +41,9 @@ unset admin_password
 
 也可将卷替换为 `./data:/var/lib/quotewisp`，但需提前创建目录并赋予 UID/GID `65532:65532` 写权限，目录权限设为 `700`。已有部署升级时保留原卷或绑定目录，勿直接用新命名卷替换原有密钥目录；外部数据库配置也须保留。
 
-## 可选 MySQL / MariaDB
+## 数据库与旧配置
 
-同时设置 `DB_HOST`、`DB_NAME`、`DB_USER`、`DB_PASSWORD` 即使用外部数据库。`DB_PORT` 默认 `3306`，`DB_TLS` 可选。旧 `MYSQL_DSN` 仍兼容，但不得与任何 `DB_*` 混用；部分配置或错误配置直接失败，不会回落 SQLite。
-
-数据库及账号由部署方创建，应用自动迁移表，因此账号需要目标库的 DDL 权限。已有数据库升级不会混入示例数据，不会自动将 MariaDB 数据搬到 SQLite。MariaDB 11.8 是既有验收基线，MySQL 8.4 仍需独立兼容性验证。
+仅使用 `DATA_DIR/quotewisp.db`。旧 `DB_*`、`MYSQL_DSN` 和 `MYSQL_*` 连接池配置已移除，设置这些变量会明确报错；不会把外部数据库自动转换为 SQLite。已有 SQLite schema 5 文件可继续使用，升级前按运行文档备份。
 
 ## 管理与导入
 
@@ -71,7 +69,7 @@ go vet ./...
 CGO_ENABLED=0 go build ./cmd/api
 ```
 
-SQLite 集成测试不依赖外部服务。设置 `MYSQL_TEST_DSN` 后，MariaDB 集成测试会创建随机命名的独立数据库、执行正式迁移并清理；未设置时明确跳过。
+所有数据库业务测试使用独立临时 SQLite 文件，不依赖外部服务或密钥，也不会因缺少数据库配置而跳过。`make e2e-web` 验证真实投稿、审核和 API 刷新流程。
 
 SQLite 使用 WAL。备份时停止应用后复制整个数据目录（含数据库、WAL/SHM 和密钥），或使用 SQLite 一致性备份工具；禁止运行中只复制 `quotewisp.db`。恢复前停止应用，保留原文件并恢复目录权限。高于当前程序支持的数据库版本会拒绝启动，不会自动降级。详见 [运行与回滚](docs/operations.md)。
 

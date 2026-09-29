@@ -14,8 +14,6 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"sentence-api/internal/database"
 )
 
 const maxTextBytes = 65535
@@ -586,9 +584,7 @@ func run(ctx context.Context, db *sql.DB, data Dataset, dry bool, receipt func(*
 	}()
 	var version uint64
 	q := "SELECT version FROM dataset_versions WHERE id=1"
-	if !dry && !database.IsSQLite(db) {
-		q += " FOR UPDATE"
-	}
+
 	if e = tx.QueryRowContext(ctx, q).Scan(&version); e != nil || version == 0 {
 		return sum, problem("database", "dataset version is missing or invalid")
 	}
@@ -720,10 +716,8 @@ func run(ctx context.Context, db *sql.DB, data Dataset, dry bool, receipt func(*
 	// One additional scan preserves the legacy corruption check: malformed or
 	// uppercase stored UUIDs that normalize to an input UUID must still conflict.
 	// Unrelated damaged rows do not make an otherwise valid import fail.
-	caseMismatch := "BINARY s.uuid <> BINARY LOWER(s.uuid)"
-	if database.IsSQLite(db) {
-		caseMismatch = "s.uuid COLLATE BINARY <> LOWER(s.uuid)"
-	}
+	caseMismatch := "s.uuid COLLATE BINARY <> LOWER(s.uuid)"
+
 	malformed := "LENGTH(s.uuid) <> 36 OR SUBSTR(s.uuid,9,1) <> '-' OR SUBSTR(s.uuid,14,1) <> '-' OR SUBSTR(s.uuid,19,1) <> '-' OR SUBSTR(s.uuid,24,1) <> '-' OR " + caseMismatch
 	rows, e := tx.QueryContext(ctx, "SELECT s.uuid FROM sentences s JOIN categories c ON c.id=s.category_id WHERE "+malformed)
 	if e != nil {
@@ -818,12 +812,9 @@ func run(ctx context.Context, db *sql.DB, data Dataset, dry bool, receipt func(*
 	changed := sum.NewCategories+sum.NewSentences > 0
 	after := version
 	if changed {
-		stamp := "CURRENT_TIMESTAMP(6)"
-		maxVersion := "18446744073709551615"
-		if database.IsSQLite(db) {
-			stamp = "CURRENT_TIMESTAMP"
-			maxVersion = "9223372036854775807"
-		}
+		stamp := "CURRENT_TIMESTAMP"
+		maxVersion := "9223372036854775807"
+
 		res, e := tx.ExecContext(ctx, "UPDATE dataset_versions SET version=version+1,published_at="+stamp+" WHERE id=1 AND version < "+maxVersion)
 		if e != nil {
 			return sum, problem("database", "dataset version update failed")

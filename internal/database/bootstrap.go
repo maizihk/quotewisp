@@ -2,38 +2,24 @@ package database
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 	"unicode/utf8"
 )
 
-// Target keeps the SQLite path separate from a MySQL DSN: any MySQL username
-// (including "sqlite") remains valid, and a bad external database never falls back.
-type Target struct{ MySQLDSN, SQLitePath string }
+// Target identifies the embedded SQLite database file.
+type Target struct{ SQLitePath string }
 
-func (t Target) Open(ctx context.Context, pool PoolConfig) (*sql.DB, error) {
-	if t.SQLitePath != "" {
-		return OpenSQLite(ctx, t.SQLitePath)
-	}
-	return Open(ctx, t.MySQLDSN, pool)
+func (t Target) Open(ctx context.Context) (*sql.DB, error) {
+	return OpenSQLite(ctx, t.SQLitePath)
 }
-func (t Target) MigrateUp() error {
-	if t.SQLitePath != "" {
-		return migrateSQLite(t.SQLitePath, 0, true)
-	}
-	return MigrateUp(t.MySQLDSN)
-}
+func (t Target) MigrateUp() error { return migrateSQLite(t.SQLitePath, 0, true) }
 func (t Target) MigrateDown(steps int) error {
 	if steps <= 0 {
 		return errors.New("down steps must be positive")
 	}
-	if t.SQLitePath != "" {
-		return migrateSQLite(t.SQLitePath, steps, false)
-	}
-	return MigrateDown(t.MySQLDSN, steps)
+	return migrateSQLite(t.SQLitePath, steps, false)
 }
 
 // StartupError exposes safe, actionable stages without DSNs or driver messages.
@@ -58,15 +44,8 @@ func startupError(stage, category string, err error) error {
 // is interrupted between migration and seeding, the pending marker survives.
 // A locked transaction consumes it with the seed, so concurrent starters cannot
 // duplicate examples, and deleting data later never reactivates the seed.
-func (t Target) Initialize(ctx context.Context, pool PoolConfig) error {
-	if t.SQLitePath == "" {
-		unlock, err := t.lockInitialization(ctx)
-		if err != nil {
-			return startupError("database-initialization-lock", "database", err)
-		}
-		defer unlock()
-	}
-	db, err := t.Open(ctx, pool)
+func (t Target) Initialize(ctx context.Context) error {
+	db, err := t.Open(ctx)
 	if err != nil {
 		return startupError("database-open", "database", err)
 	}
@@ -87,10 +66,8 @@ func (t Target) Initialize(ctx context.Context, pool PoolConfig) error {
 }
 
 func existingSchema(ctx context.Context, db *sql.DB) (bool, error) {
-	query := "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='schema_migrations'"
-	if IsSQLite(db) {
-		query = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
-	}
+	query := "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+
 	var count int
 	if err := db.QueryRowContext(ctx, query).Scan(&count); err != nil {
 		return false, err
@@ -133,10 +110,8 @@ func prepareInitialization(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	insert := "INSERT IGNORE INTO app_initialization (id, seed_pending) VALUES (1, FALSE)"
-	if IsSQLite(db) {
-		insert = "INSERT OR IGNORE INTO app_initialization (id, seed_pending) VALUES (1, FALSE)"
-	}
+	insert := "INSERT OR IGNORE INTO app_initialization (id, seed_pending) VALUES (1, FALSE)"
+
 	result, err := tx.ExecContext(ctx, insert)
 	if err != nil {
 		return err
@@ -148,10 +123,8 @@ func prepareInitialization(ctx context.Context, db *sql.DB) error {
 	if inserted == 1 {
 		// The first writer holds this marker's lock until the decision commits.
 		// Other initializers cannot start migrations before that point.
-		query := "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name <> 'app_initialization'"
-		if IsSQLite(db) {
-			query = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'app_initialization'"
-		}
+		query := "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'app_initialization'"
+
 		var tables int
 		if err = tx.QueryRowContext(ctx, query).Scan(&tables); err != nil {
 			return err
@@ -172,7 +145,7 @@ func finishInitialization(ctx context.Context, db *sql.DB) error {
 	}
 	defer tx.Rollback()
 	var pending bool
-	if err = tx.QueryRowContext(ctx, "SELECT seed_pending FROM app_initialization WHERE id=1"+ForUpdate(db)).Scan(&pending); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT seed_pending FROM app_initialization WHERE id=1").Scan(&pending); err != nil {
 		return err
 	}
 	if !pending {
@@ -209,41 +182,4 @@ func finishInitialization(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	return tx.Commit()
-}
-
-// MySQL DDL auto-commits, so an advisory lock spans schema inspection, migration
-// and seeding. It prevents another first starter from seeing an in-flight dirty
-// migration. A dedicated connection owns and releases the lock.
-func (t Target) lockInitialization(ctx context.Context) (func(), error) {
-	cfg, err := normalizedConfig(t.MySQLDSN, false)
-	if err != nil {
-		return nil, err
-	}
-	lockDB, err := Open(ctx, t.MySQLDSN, PoolConfig{MaxOpenConns: 1, MaxIdleConns: 1})
-	if err != nil {
-		return nil, err
-	}
-	conn, err := lockDB.Conn(ctx)
-	if err != nil {
-		lockDB.Close()
-		return nil, err
-	}
-	digest := sha256.Sum256([]byte(cfg.DBName))
-	name := fmt.Sprintf("quotewisp:init:%x", digest[:20])
-	var acquired sql.NullInt64
-	if err = conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 30)", name).Scan(&acquired); err != nil || !acquired.Valid || acquired.Int64 != 1 {
-		conn.Close()
-		lockDB.Close()
-		if err == nil {
-			err = errors.New("initialization lock timeout")
-		}
-		return nil, err
-	}
-	return func() {
-		release, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = conn.ExecContext(release, "SELECT RELEASE_LOCK(?)", name)
-		conn.Close()
-		lockDB.Close()
-	}, nil
 }

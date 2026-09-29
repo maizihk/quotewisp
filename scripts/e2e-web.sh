@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end smoke: admin create → submit → login → approve → read API poll.
-# Requires MYSQL_TEST_DSN or a local MariaDB/MySQL container (see resolve_admin_dsn).
+# Uses an isolated temporary SQLite data directory.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,8 +18,6 @@ POLL_TIMEOUT="${E2E_POLL_TIMEOUT:-45}"
 FIXTURE="${FIXTURE:-$ROOT/testdata/sentences.json}"
 
 APP_PID=""
-DB_CREATED=0
-DB_NAME=""
 COOKIE_JAR=""
 TMPDIR_E2E=""
 
@@ -29,9 +27,6 @@ die() { log "FAIL: $*"; exit 1; }
 cleanup() {
   local code=$?
   if [ -n "$APP_PID" ]; then kill "$APP_PID" 2>/dev/null || true; wait "$APP_PID" 2>/dev/null || true; fi
-  if [ "$DB_CREATED" -eq 1 ] && [ -n "$DB_NAME" ]; then
-    mysql_exec "DROP DATABASE IF EXISTS \`$DB_NAME\`" 2>/dev/null || true
-  fi
   if [ -n "$TMPDIR_E2E" ] && [ -d "$TMPDIR_E2E" ]; then rm -rf "$TMPDIR_E2E"; fi
   if [ "$code" -ne 0 ]; then log "e2e-web aborted (exit $code)"; fi
 }
@@ -61,68 +56,6 @@ json_field() {
   printf '%s' "$json" | sed -n "s/.*\"${field}\":\"\\([^\"]*\\)\".*/\\1/p" | head -1
 }
 
-resolve_admin_dsn() {
-  if [ -n "${MYSQL_TEST_DSN:-}" ]; then
-    ADMIN_DSN="$MYSQL_TEST_DSN"
-    return 0
-  fi
-  local container="${MARIADB_TEST_CONTAINER:-MariaDB}"
-  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
-    die "set MYSQL_TEST_DSN or start MariaDB container ($container)"
-  fi
-  MARIADB_CONTAINER="$container"
-  MARIADB_ROOT_PASSWORD="$(docker exec "$container" sh -c 'printf %s "${MARIADB_ROOT_PASSWORD:-$MYSQL_ROOT_PASSWORD}"')"
-  if [ -z "$MARIADB_ROOT_PASSWORD" ]; then
-    die "MariaDB container has no MARIADB_ROOT_PASSWORD or MYSQL_ROOT_PASSWORD"
-  fi
-  ADMIN_DSN="root:${MARIADB_ROOT_PASSWORD}@tcp(127.0.0.1:3306)/mysql"
-}
-
-parse_dsn() {
-  # user:pass@tcp(host:port)/db — password may contain URL-encoded bytes.
-  if ! command -v python3 >/dev/null 2>&1; then
-    die "python3 required to parse MYSQL_TEST_DSN when not using docker exec mysql"
-  fi
-  eval "$(ADMIN_DSN="$ADMIN_DSN" python3 - <<'PY'
-import os, re, sys
-from urllib.parse import unquote
-dsn = os.environ["ADMIN_DSN"]
-m = re.match(r"^([^:@/]+):(.+)@tcp\(([^:]+):(\d+)\)/([^?]*)", dsn)
-if not m:
-    sys.exit("invalid DSN format")
-user, pw, host, port, db = m.group(1), unquote(m.group(2)), m.group(3), m.group(4), m.group(5)
-for k, v in [("MYSQL_USER", user), ("MYSQL_PASS", pw), ("MYSQL_HOST", host), ("MYSQL_PORT", port), ("MYSQL_ADMIN_DB", db)]:
-    print(f"{k}={v!r}")
-PY
-)"
-}
-
-mysql_exec() {
-  local sql="$1"
-  if [ -n "${MARIADB_CONTAINER:-}" ]; then
-    docker exec -i "$MARIADB_CONTAINER" mariadb -uroot -p"${MARIADB_ROOT_PASSWORD}" -e "$sql"
-    return
-  fi
-  parse_dsn
-  if command -v mysql >/dev/null 2>&1; then
-    MYSQL_PWD="$MYSQL_PASS" mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -e "$sql"
-    return
-  fi
-  die "need mysql client or MariaDB container for database setup"
-}
-
-dsn_for_db() {
-  local db="$1"
-  if [ -n "${MARIADB_CONTAINER:-}" ]; then
-    printf 'root:%s@tcp(127.0.0.1:3306)/%s?parseTime=true&multiStatements=true&charset=utf8mb4' \
-      "$MARIADB_ROOT_PASSWORD" "$db"
-    return
-  fi
-  parse_dsn
-  printf '%s:%s@tcp(%s:%s)/%s?parseTime=true&multiStatements=true&charset=utf8mb4' \
-    "$MYSQL_USER" "$MYSQL_PASS" "$MYSQL_HOST" "$MYSQL_PORT" "$db"
-}
-
 wait_http() {
   local url="$1" label="$2" tries="${3:-60}"
   local i=1
@@ -144,17 +77,13 @@ ensure_binary() {
 }
 
 main() {
-  resolve_admin_dsn
   ensure_binary
   [ -f "$FIXTURE" ] || die "fixture not found: $FIXTURE"
 
-  DB_NAME="sentence_api_e2e_$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
-  log "creating isolated database $DB_NAME"
-  mysql_exec "CREATE DATABASE \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
-  DB_CREATED=1
-
-  MYSQL_DSN="$(dsn_for_db "$DB_NAME")"
-  export MYSQL_DSN
+  TMPDIR_E2E="$(mktemp -d)"
+  mkdir -p "$TMPDIR_E2E/data"
+  chmod 700 "$TMPDIR_E2E/data"
+  export DATA_DIR="$TMPDIR_E2E/data"
 
   log "migrate up"
   "$BIN" migrate up
@@ -165,10 +94,6 @@ main() {
   log "create admin $ADMIN_USER"
   printf '%s\n' "$ADMIN_PASS" | "$BIN" web admin create --username "$ADMIN_USER" --password-stdin >/dev/null
 
-  TMPDIR_E2E="$(mktemp -d)"
-  mkdir -p "$TMPDIR_E2E/data"
-  chmod 700 "$TMPDIR_E2E/data"
-  if [ "$(id -u)" -eq 0 ]; then chown 65532:65532 "$TMPDIR_E2E/data"; fi
   COOKIE_JAR="$TMPDIR_E2E/cookies.txt"
   APP_LOG="$TMPDIR_E2E/app.log"
 

@@ -5,23 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
-	"github.com/golang-migrate/migrate/v4"
-	migratemysql "github.com/golang-migrate/migrate/v4/database/mysql"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
-	sqlitedriver "modernc.org/sqlite"
+	_ "modernc.org/sqlite"
 
 	"sentence-api/internal/snapshot"
-	"sentence-api/migrations"
 )
 
 const (
@@ -30,94 +21,6 @@ const (
 	RequiredSchemaVersion      = CurrentSchemaVersion
 )
 
-type PoolConfig struct {
-	MaxOpenConns, MaxIdleConns int
-	ConnMaxLifetime            time.Duration
-}
-
-type safeDriverLogger struct{ logger *slog.Logger }
-
-func (l safeDriverLogger) Print(_ ...any) {
-	l.logger.Error("mysql_driver_diagnostic", "category", "driver-critical")
-}
-
-func newDriverLogger() mysql.Logger {
-	return safeDriverLogger{logger: newDriverSlog(os.Stderr)}
-}
-
-func newDriverSlog(w io.Writer) *slog.Logger {
-	opts := &slog.HandlerOptions{ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-		if a.Key == slog.TimeKey {
-			return slog.Time(a.Key, a.Value.Time().UTC())
-		}
-		return a
-	}}
-	return slog.New(slog.NewJSONHandler(w, opts))
-}
-
-func normalizedConfig(raw string, multiStatements bool) (*mysql.Config, error) {
-	c, e := mysql.ParseDSN(raw)
-	if e != nil {
-		return nil, errors.New("invalid MYSQL_DSN")
-	}
-	if c.DBName == "" {
-		return nil, errors.New("MYSQL_DSN must include a database name")
-	}
-	// Match the driver's grammar: the final slash starts the database name and
-	// the first question mark after it starts parameters. Password punctuation
-	// and punctuation inside encoded parameter values must not move this split.
-	if slash := strings.LastIndexByte(raw, '/'); slash >= 0 {
-		if rel := strings.IndexByte(raw[slash+1:], '?'); rel >= 0 {
-			i := slash + 1 + rel
-			q, e := url.ParseQuery(raw[i+1:])
-			if e != nil {
-				return nil, errors.New("invalid MYSQL_DSN parameters")
-			}
-			for _, k := range []string{"timeout", "readTimeout", "writeTimeout"} {
-				if v, ok := q[k]; ok {
-					d, e := time.ParseDuration(v[len(v)-1])
-					if e != nil || d <= 0 {
-						return nil, fmt.Errorf("MYSQL_DSN %s must be positive", k)
-					}
-				}
-			}
-		}
-	}
-	c.ParseTime = true
-	c.Loc = time.UTC
-	c.Collation = "utf8mb4_unicode_ci"
-	c.MultiStatements = multiStatements
-	if c.Timeout == 0 {
-		c.Timeout = 5 * time.Second
-	}
-	if c.ReadTimeout == 0 {
-		c.ReadTimeout = 30 * time.Second
-	}
-	if c.WriteTimeout == 0 {
-		c.WriteTimeout = 30 * time.Second
-	}
-	if c.Params == nil {
-		c.Params = map[string]string{}
-	}
-	c.Params["time_zone"] = "'+00:00'"
-	c.Params["charset"] = "utf8mb4"
-	// Reparse the normalized DSN so driver-special parameters such as charset
-	// populate their dedicated internal fields before NewConnector is used.
-	// Logger is not serialized and is attached only after this round trip.
-	normalized, e := mysql.ParseDSN(c.FormatDSN())
-	if e != nil {
-		return nil, errors.New("normalize MYSQL_DSN")
-	}
-	normalized.Logger = newDriverLogger()
-	return normalized, nil
-}
-func NormalizeDSN(raw string, multiStatements bool) (string, error) {
-	c, e := normalizedConfig(raw, multiStatements)
-	if e != nil {
-		return "", e
-	}
-	return c.FormatDSN(), nil
-}
 func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
 	if path == "" {
 		return nil, errors.New("open sqlite database")
@@ -138,49 +41,38 @@ func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
 	// long import. BEGIN IMMEDIATE still serializes all writing transactions.
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(4)
-	if err = db.PingContext(ctx); err != nil {
+	if err = pingSQLite(ctx, db); err != nil {
 		db.Close()
-		return nil, errors.New("ping database")
+		return nil, err
 	}
 	return db, nil
 }
 
-func Open(ctx context.Context, raw string, p PoolConfig) (*sql.DB, error) {
-
-	c, e := normalizedConfig(raw, false)
-	if e != nil {
-		return nil, e
+// Concurrent first connections can contend while enabling WAL, before SQLite's
+// busy handler can wait. Retry only lock contention within a bounded deadline.
+func pingSQLite(ctx context.Context, db *sql.DB) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for {
+		err := db.PingContext(ctx)
+		if err == nil {
+			return nil
+		}
+		var coded interface{ Code() int }
+		if !errors.As(err, &coded) || (coded.Code()&255 != 5 && coded.Code()&255 != 6) {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return errors.New("ping database")
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
-	connector, e := mysql.NewConnector(c)
-	if e != nil {
-		return nil, errors.New("open database")
-	}
-	db := sql.OpenDB(connector)
-	db.SetMaxOpenConns(p.MaxOpenConns)
-	db.SetMaxIdleConns(p.MaxIdleConns)
-	db.SetConnMaxLifetime(p.ConnMaxLifetime)
-	if e = db.PingContext(ctx); e != nil {
-		db.Close()
-		return nil, errors.New("ping database")
-	}
-	return db, nil
-}
-
-// IsSQLite reports whether db is backed by the embedded SQLite driver. It is
-// used by write paths to omit MySQL-only row-lock syntax.
-func IsSQLite(db *sql.DB) bool {
-	if db == nil {
-		return false
-	}
-	_, ok := db.Driver().(*sqlitedriver.Driver)
-	return ok
-}
-
-func ForUpdate(db *sql.DB) string {
-	if IsSQLite(db) {
-		return ""
-	}
-	return " FOR UPDATE"
 }
 
 type Queryer interface {
@@ -248,10 +140,8 @@ func LoadSnapshot(ctx context.Context, db *sql.DB) (*snapshot.Snapshot, error) {
 		return nil, e
 	}
 	b := snapshot.NewBuilder(v, time.Time{})
-	categoryOrder := "BINARY code ASC"
-	if IsSQLite(db) {
-		categoryOrder = "code COLLATE BINARY ASC"
-	}
+	categoryOrder := "code COLLATE BINARY ASC"
+
 	rows, e := tx.QueryContext(ctx, "SELECT code, name, sort_order FROM categories WHERE enabled = TRUE ORDER BY sort_order ASC, "+categoryOrder)
 	if e != nil {
 		return nil, errors.New("read categories")
@@ -315,63 +205,7 @@ type ValidationError struct{ Reason string }
 
 func (e *ValidationError) Error() string { return "snapshot validation failed: " + e.Reason }
 
-func MigrateUp(raw string) error { return migrateRun(raw, 0, true) }
-func MigrateDown(raw string, steps int) error {
-	if steps <= 0 {
-		return errors.New("down steps must be positive")
-	}
-	return migrateRun(raw, steps, false)
-}
-func migrateRun(raw string, steps int, up bool) error {
-	c, e := normalizedConfig(raw, true)
-	if e != nil {
-		return e
-	}
-	connector, e := mysql.NewConnector(c)
-	if e != nil {
-		return errors.New("open migration database")
-	}
-	db := sql.OpenDB(connector)
-	defer db.Close()
-	driver, e := migratemysql.WithInstance(db, &migratemysql.Config{})
-	if e != nil {
-		return errors.New("create migration database driver")
-	}
-	src, e := iofs.New(fs.FS(migrations.FS), ".")
-	if e != nil {
-		return errors.New("create migration source")
-	}
-	m, e := migrate.NewWithInstance("iofs", src, "mysql", driver)
-	if e != nil {
-		return errors.New("create migrator")
-	}
-	defer m.Close()
-	v, dirty, ve := m.Version()
-	if ve != nil && !errors.Is(ve, migrate.ErrNilVersion) {
-		return errors.New("read migration state")
-	}
-	if dirty {
-		return errors.New("migration state is dirty")
-	}
-	if !errors.Is(ve, migrate.ErrNilVersion) && v > RequiredSchemaVersion {
-		return errors.New("unknown migration version")
-	}
-	if up {
-		e = m.Up()
-	} else {
-		e = m.Steps(-steps)
-	}
-	if errors.Is(e, migrate.ErrNoChange) {
-		return nil
-	}
-	if e != nil {
-		return errors.New("migration failed")
-	}
-	return nil
-}
-
-// migrateSQLite deliberately uses a small native migrator instead of the
-// cgo-only sqlite3 migrate driver. Each version is committed independently and
+// migrateSQLite commits each schema version independently and atomically.
 // the state row is updated in the same transaction, so concurrent starters are
 // serialized by SQLite's write lock.
 func migrateSQLite(raw string, steps int, up bool) error {

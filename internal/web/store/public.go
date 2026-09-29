@@ -63,10 +63,8 @@ func (s *Store) BuildPublicData(ctx context.Context) (*PublicData, error) {
 
 	out := &PublicData{Version: version, BuiltAt: time.Now().UTC(), Categories: []PublicCategory{}, Recent: []RecentItem{}}
 
-	categoryOrder := "BINARY c.code ASC"
-	if database.IsSQLite(s.DB) {
-		categoryOrder = "c.code COLLATE BINARY ASC"
-	}
+	categoryOrder := "c.code COLLATE BINARY ASC"
+
 	rows, err := tx.QueryContext(ctx, `SELECT c.code, c.name, c.sort_order,
 		COALESCE(SUM(CASE WHEN s.status = 1 THEN 1 ELSE 0 END), 0)
 		FROM categories c

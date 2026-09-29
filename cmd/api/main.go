@@ -67,11 +67,7 @@ func run(args []string) error {
 }
 
 func target(c config.Config) database.Target {
-	return database.Target{MySQLDSN: c.MYSQLDSN, SQLitePath: c.SQLitePath}
-}
-
-func pool(c config.Config) database.PoolConfig {
-	return database.PoolConfig{MaxOpenConns: c.MySQLMaxOpenConns, MaxIdleConns: c.MySQLMaxIdleConns, ConnMaxLifetime: c.MySQLConnMaxLifetime}
+	return database.Target{SQLitePath: c.SQLitePath}
 }
 
 func runImport(args []string) error {
@@ -103,7 +99,7 @@ func runImport(args []string) error {
 	if closeErr != nil {
 		return errors.New("close import file")
 	}
-	db, err := target(c).Open(ctx, pool(c))
+	db, err := target(c).Open(ctx)
 	if err != nil {
 		return err
 	}
@@ -167,11 +163,11 @@ func runService() error {
 	life, stopLife := context.WithCancel(context.Background())
 	defer stopLife()
 	startCtx, cancel := context.WithTimeout(life, c.SnapshotLoadTimeout)
-	if err = target(c).Initialize(startCtx, pool(c)); err != nil {
+	if err = target(c).Initialize(startCtx); err != nil {
 		cancel()
 		return err
 	}
-	db, err := target(c).Open(startCtx, pool(c))
+	db, err := target(c).Open(startCtx)
 	if err == nil {
 		err = database.CheckReadSchema(startCtx, db)
 	}

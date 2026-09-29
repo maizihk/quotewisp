@@ -8,10 +8,11 @@ release policy at the owner's request.
 ## Checks and publication
 
 Pushes to main, `v*` tag pushes, pull requests and manual runs execute quality,
-fuzz, integration and image checks. The integration job always starts its own
-MariaDB 11.8 service and runs the complete race suite with a nonempty local DSN;
-it does not silently skip database tests or connect to production. Its password
-is disposable CI configuration, not a repository secret. MySQL 8.4 is not covered.
+fuzz, integration and image checks. All database tests use isolated temporary
+SQLite files without external services, DSNs or secrets. The integration job runs
+SQLite business contracts and the submission/approval HTTP flow; the image job
+verifies SQLite initialization, persistence and API/Web behavior. MySQL/MariaDB
+support has been removed.
 
 Publishing requires a manual `workflow_dispatch` with `publish=true`, on an
 existing stable tag matching `vMAJOR.MINOR.PATCH`. Branches and prerelease tags
@@ -57,16 +58,13 @@ The workflow does not deploy or create a GitHub Release page.
 
 Current images serve both the read API and `web` from one digest. The read API
 supports reads at schema versions 1–5; writes require schema 5. Normal startup
-runs migrations automatically to schema 5. SQLite is the default backend;
-MariaDB 11.8 remains supported through explicit database configuration.
+runs migrations automatically to schema 5. SQLite is the only backend.
 
 For SQLite, stop the single application instance and back up the complete
 `DATA_DIR` (database, WAL/SHM if present, and secret) before replacing the image.
 Start the new image against the existing volume, then verify readiness, login,
 settings and data. Do not run an old schema-4 application against the upgraded
 volume. Roll back with the matching old image and the pre-upgrade backup.
-For MariaDB, back up the database and application secret, coordinate all readers
-and writers, and plan the automatic migration before starting the new image.
 See `docs/operations.md` and `docs/sqlite-release-validation.md`.
 
 ## Evidence

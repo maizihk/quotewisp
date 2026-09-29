@@ -18,7 +18,6 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifica
 COPY --from=build /out/sentence-api /sentence-api
 COPY --from=build --chown=65532:65532 /out/quotewisp-data /var/lib/quotewisp
 COPY --from=build --chown=65532:65532 /out/tmp /tmp
-COPY migrations/*.sql /migrations/
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/sentence-api"]

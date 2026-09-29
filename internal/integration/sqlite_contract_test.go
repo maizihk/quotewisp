@@ -20,7 +20,6 @@ import (
 	"sentence-api/internal/importer"
 	"sentence-api/internal/observability"
 	"sentence-api/internal/snapshot"
-	"sentence-api/internal/testdb"
 	"sentence-api/internal/web/store"
 )
 
@@ -39,20 +38,17 @@ func openSQLiteContract(t *testing.T) (*sql.DB, *store.Store, context.Context, s
 	return db, store.New(db), ctx, raw
 }
 
-func runContractBackends(t *testing.T, fn func(*testing.T, *sql.DB, *store.Store, context.Context, string)) {
+func runSQLiteContract(t *testing.T, fn func(*testing.T, *sql.DB, *store.Store, context.Context, string)) {
 	t.Helper()
 	t.Run("sqlite", func(t *testing.T) {
 		db, st, ctx, raw := openSQLiteContract(t)
 		fn(t, db, st, ctx, raw)
 	})
-	t.Run("mariadb", func(t *testing.T) {
-		db := testdb.Open(t)
-		fn(t, db, store.New(db), context.Background(), "")
-	})
+
 }
 
 func TestSQLiteCategoryAndSentenceCRUDContracts(t *testing.T) {
-	runContractBackends(t, testCategoryAndSentenceCRUDContracts)
+	runSQLiteContract(t, testCategoryAndSentenceCRUDContracts)
 }
 
 func testCategoryAndSentenceCRUDContracts(t *testing.T, _ *sql.DB, st *store.Store, ctx context.Context, _ string) {
@@ -107,7 +103,7 @@ func testCategoryAndSentenceCRUDContracts(t *testing.T, _ *sql.DB, st *store.Sto
 }
 
 func TestSQLiteSubmissionReviewDuplicateAndSettingsContracts(t *testing.T) {
-	runContractBackends(t, testSubmissionReviewDuplicateAndSettingsContracts)
+	runSQLiteContract(t, testSubmissionReviewDuplicateAndSettingsContracts)
 }
 
 func testSubmissionReviewDuplicateAndSettingsContracts(t *testing.T, _ *sql.DB, st *store.Store, ctx context.Context, _ string) {
@@ -156,7 +152,7 @@ func testSubmissionReviewDuplicateAndSettingsContracts(t *testing.T, _ *sql.DB, 
 }
 
 func TestSQLiteAdminSessionAuthRetentionAndLastAdminContracts(t *testing.T) {
-	runContractBackends(t, testAdminSessionAuthRetentionAndLastAdminContracts)
+	runSQLiteContract(t, testAdminSessionAuthRetentionAndLastAdminContracts)
 }
 
 func testAdminSessionAuthRetentionAndLastAdminContracts(t *testing.T, _ *sql.DB, st *store.Store, ctx context.Context, raw string) {
@@ -264,7 +260,7 @@ func testAdminSessionAuthRetentionAndLastAdminContracts(t *testing.T, _ *sql.DB,
 }
 
 func TestSQLiteExactDuplicateBytewiseContracts(t *testing.T) {
-	runContractBackends(t, testExactDuplicateBytewiseContracts)
+	runSQLiteContract(t, testExactDuplicateBytewiseContracts)
 }
 
 func testExactDuplicateBytewiseContracts(t *testing.T, _ *sql.DB, st *store.Store, ctx context.Context, _ string) {
@@ -279,7 +275,7 @@ func testExactDuplicateBytewiseContracts(t *testing.T, _ *sql.DB, st *store.Stor
 }
 
 func TestSQLiteDuplicateAdminUsernameContract(t *testing.T) {
-	runContractBackends(t, testDuplicateAdminUsernameContract)
+	runSQLiteContract(t, testDuplicateAdminUsernameContract)
 }
 
 func testDuplicateAdminUsernameContract(t *testing.T, _ *sql.DB, st *store.Store, ctx context.Context, _ string) {
@@ -292,7 +288,7 @@ func testDuplicateAdminUsernameContract(t *testing.T, _ *sql.DB, st *store.Store
 }
 
 func TestSQLiteEmptyPublicContracts(t *testing.T) {
-	runContractBackends(t, testEmptyPublicContracts)
+	runSQLiteContract(t, testEmptyPublicContracts)
 }
 
 func testEmptyPublicContracts(t *testing.T, db *sql.DB, st *store.Store, ctx context.Context, _ string) {
@@ -331,7 +327,7 @@ func testEmptyPublicContracts(t *testing.T, db *sql.DB, st *store.Store, ctx con
 }
 
 func TestSQLiteImportAtomicityAndVersion(t *testing.T) {
-	runContractBackends(t, func(t *testing.T, db *sql.DB, st *store.Store, ctx context.Context, _ string) {
+	runSQLiteContract(t, func(t *testing.T, db *sql.DB, st *store.Store, ctx context.Context, _ string) {
 		const original = `{"categories":[{"code":"original","name":"原创"}],"sentences":[{"uuid":"75a45fd4-4f2f-45eb-80cb-6f0a7bcdfaf2","category":"original","content":"导入内容"}]}`
 		preview, err := importer.Import(ctx, db, strings.NewReader(original), true)
 		if err != nil || preview.NewSentences != 1 {
@@ -367,7 +363,7 @@ func TestSQLiteImportAtomicityAndVersion(t *testing.T) {
 }
 
 func TestInitialAdminConcurrentOnceContract(t *testing.T) {
-	runContractBackends(t, func(t *testing.T, db *sql.DB, st *store.Store, ctx context.Context, raw string) {
+	runSQLiteContract(t, func(t *testing.T, db *sql.DB, st *store.Store, ctx context.Context, raw string) {
 		var before uint64
 		if err := db.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id=1").Scan(&before); err != nil {
 			t.Fatal(err)
@@ -440,7 +436,7 @@ func TestInitialAdminConcurrentOnceContract(t *testing.T) {
 }
 
 func TestPasswordResetAndConcurrentLoginContract(t *testing.T) {
-	runContractBackends(t, func(t *testing.T, _ *sql.DB, st *store.Store, ctx context.Context, raw string) {
+	runSQLiteContract(t, func(t *testing.T, _ *sql.DB, st *store.Store, ctx context.Context, raw string) {
 		other := st
 		if raw != "" {
 			db, err := database.OpenSQLite(ctx, raw)
@@ -487,7 +483,7 @@ func TestPasswordResetAndConcurrentLoginContract(t *testing.T) {
 }
 
 func TestImportIndexedLookupPreservesCorruptUUIDConflict(t *testing.T) {
-	runContractBackends(t, func(t *testing.T, db *sql.DB, _ *store.Store, ctx context.Context, _ string) {
+	runSQLiteContract(t, func(t *testing.T, db *sql.DB, _ *store.Store, ctx context.Context, _ string) {
 		canonical := "abcdef00-0000-4000-8000-000000000001"
 		source := `{"categories":[{"code":"lookup","name":"查重","sort_order":0}],"sentences":[{"uuid":"` + canonical + `","category":"lookup","content":"查重测试"}]}`
 		if _, err := importer.Import(ctx, db, strings.NewReader(source), false); err != nil {

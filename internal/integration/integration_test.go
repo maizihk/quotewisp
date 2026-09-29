@@ -2,19 +2,15 @@ package integration
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/go-sql-driver/mysql"
 
 	"sentence-api/internal/database"
 	"sentence-api/internal/httpapi"
@@ -23,56 +19,13 @@ import (
 	"sentence-api/internal/snapshot"
 )
 
-func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
-	raw := os.Getenv("MYSQL_TEST_DSN")
-	if raw == "" {
-		t.Skip("MYSQL_TEST_DSN is not set; external database integration test skipped")
-	}
-	cfg, err := mysql.ParseDSN(raw)
-	if err != nil {
-		t.Fatal("MYSQL_TEST_DSN is invalid")
-	}
-	adminDB := cfg.DBName
-	if adminDB == "" {
-		adminDB = "mysql"
-	}
-	cfg.DBName = adminDB
-	cfg.ParseTime = true
-	admin, err := sql.Open("mysql", cfg.FormatDSN())
-	if err != nil {
-		t.Fatal("open integration admin connection")
-	}
-	t.Cleanup(func() { _ = admin.Close() })
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	if err = admin.PingContext(ctx); err != nil {
-		t.Fatal("connect integration database")
-	}
-	var suffix [8]byte
-	if _, err = rand.Read(suffix[:]); err != nil {
-		t.Fatal("generate isolated database name")
-	}
-	name := "sentence_api_test_" + hex.EncodeToString(suffix[:])
-	if _, err = admin.ExecContext(ctx, "CREATE DATABASE `"+name+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"); err != nil {
-		t.Fatal("create isolated test database")
-	}
-	created := true
-	t.Cleanup(func() {
-		if !created {
-			return
-		}
-		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cleanCancel()
-		if _, e := admin.ExecContext(cleanCtx, "DROP DATABASE `"+name+"`"); e != nil {
-			t.Errorf("drop isolated test database: %v", e)
-		}
-	})
-	cfg.DBName = name
-	testDSN := cfg.FormatDSN()
-	if err = database.MigrateUp(testDSN); err != nil {
+func TestSQLiteMigrationImportAndSnapshot(t *testing.T) {
+	ctx := context.Background()
+	target := database.Target{SQLitePath: filepath.Join(t.TempDir(), "migration.db")}
+	if err := target.MigrateUp(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := database.Open(ctx, testDSN, database.PoolConfig{MaxOpenConns: 4, MaxIdleConns: 2, ConnMaxLifetime: time.Minute})
+	db, err := target.Open(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,17 +37,17 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 		t.Fatalf("schema version=%d dirty=%t err=%v", v, dirty, e)
 	}
 	var webTables int
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('admin_users','submissions','admin_sessions')").Scan(&webTables); err != nil || webTables != 3 {
+	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('admin_users','submissions','admin_sessions')").Scan(&webTables); err != nil || webTables != 3 {
 		t.Fatalf("web tables missing count=%d err=%v", webTables, err)
 	}
 	var settingsTables int
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'site_settings'").Scan(&settingsTables); err != nil || settingsTables != 1 {
+	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = 'site_settings'").Scan(&settingsTables); err != nil || settingsTables != 1 {
 		t.Fatalf("site_settings missing count=%d err=%v", settingsTables, err)
 	}
 	if _, err = db.ExecContext(ctx, "INSERT INTO site_settings (id, site_name, english_name, slogan, contact) VALUES (1, ?, ?, ?, ?)", "Onword\u200b", "Quotewisp", "偶遇一句话", "ops@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if err = database.MigrateDown(testDSN, int(database.CurrentSchemaVersion)-3); err != nil {
+	if err = target.MigrateDown(int(database.CurrentSchemaVersion) - 3); err != nil {
 		t.Fatal(err)
 	}
 	if v, dirty, e := database.SchemaVersion(ctx, db); e != nil || dirty || v != 3 {
@@ -105,10 +58,10 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 		t.Fatalf("site_name not preserved after brand down name=%q err=%v", preservedName, err)
 	}
 	var brandColumns int
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'site_settings' AND column_name IN ('english_name','slogan')").Scan(&brandColumns); err != nil || brandColumns != 0 {
+	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('site_settings') WHERE name IN ('english_name','slogan')").Scan(&brandColumns); err != nil || brandColumns != 0 {
 		t.Fatalf("brand columns remain after down count=%d err=%v", brandColumns, err)
 	}
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('admin_users','submissions','admin_sessions')").Scan(&webTables); err != nil || webTables != 3 {
+	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('admin_users','submissions','admin_sessions')").Scan(&webTables); err != nil || webTables != 3 {
 		t.Fatalf("web tables missing after brand down count=%d err=%v", webTables, err)
 	}
 	if err = database.CheckWriteSchema(ctx, db); err == nil {
@@ -117,7 +70,7 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 	if err = database.CheckReadSchema(ctx, db); err != nil {
 		t.Fatal("CheckReadSchema rejected version 3")
 	}
-	if err = database.MigrateUp(testDSN); err != nil {
+	if err = target.MigrateUp(); err != nil {
 		t.Fatal(err)
 	}
 	var migratedName string
@@ -128,25 +81,25 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 	if migratedName != "Onword\u200b" || migratedEnglish.Valid || migratedSlogan.Valid {
 		t.Fatalf("3 to 4 migration changed settings name=%q english=%+v slogan=%+v", migratedName, migratedEnglish, migratedSlogan)
 	}
-	if err = database.MigrateDown(testDSN, int(database.CurrentSchemaVersion)-3); err != nil {
+	if err = target.MigrateDown(int(database.CurrentSchemaVersion) - 3); err != nil {
 		t.Fatal(err)
 	}
-	if err = database.MigrateDown(testDSN, 1); err != nil {
+	if err = target.MigrateDown(1); err != nil {
 		t.Fatal(err)
 	}
 	if v, dirty, e := database.SchemaVersion(ctx, db); e != nil || dirty || v != 2 {
 		t.Fatalf("after settings down version=%d dirty=%t err=%v", v, dirty, e)
 	}
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'site_settings'").Scan(&settingsTables); err != nil || settingsTables != 0 {
+	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = 'site_settings'").Scan(&settingsTables); err != nil || settingsTables != 0 {
 		t.Fatalf("site_settings remain after down count=%d err=%v", settingsTables, err)
 	}
-	if err = database.MigrateDown(testDSN, 1); err != nil {
+	if err = target.MigrateDown(1); err != nil {
 		t.Fatal(err)
 	}
 	if v, dirty, e := database.SchemaVersion(ctx, db); e != nil || dirty || v != 1 {
 		t.Fatalf("after down version=%d dirty=%t err=%v", v, dirty, e)
 	}
-	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('admin_users','submissions','admin_sessions')").Scan(&webTables); err != nil || webTables != 0 {
+	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('admin_users','submissions','admin_sessions')").Scan(&webTables); err != nil || webTables != 0 {
 		t.Fatalf("web tables remain after down count=%d err=%v", webTables, err)
 	}
 	if err = database.CheckWriteSchema(ctx, db); err == nil {
@@ -155,7 +108,7 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 	if err = database.CheckReadSchema(ctx, db); err != nil {
 		t.Fatal("CheckReadSchema rejected version 1")
 	}
-	if err = database.MigrateUp(testDSN); err != nil {
+	if err = target.MigrateUp(); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.CheckWriteSchema(ctx, db); err != nil {
@@ -297,7 +250,7 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 	}
 	defer tx.Rollback()
 	var before uint64
-	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id=1 FOR UPDATE").Scan(&before); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id=1").Scan(&before); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE sentences SET source='并发发布' WHERE uuid='de305d54-75b4-431b-adb2-eb6b9e546014'"); err != nil {
@@ -331,7 +284,7 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if _, err = db.ExecContext(ctx, "CREATE TRIGGER fail_batch BEFORE INSERT ON sentences FOR EACH ROW BEGIN IF NEW.uuid='00000000-0000-0000-0000-000000000250' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='test failure'; END IF; END"); err != nil {
+	if _, err = db.ExecContext(ctx, "CREATE TRIGGER fail_batch BEFORE INSERT ON sentences WHEN NEW.uuid='00000000-0000-0000-0000-000000000250' BEGIN SELECT RAISE(ABORT, 'test failure'); END"); err != nil {
 		t.Fatal(err)
 	}
 	many := importer.Dataset{Categories: []importer.Category{{Code: "batchnew", Name: "批量回滚"}}, InputCount: 251}

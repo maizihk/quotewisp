@@ -17,7 +17,7 @@ func receiptTestDB(t *testing.T) *sql.DB {
 	if err := target.MigrateUp(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := target.Open(context.Background(), database.PoolConfig{})
+	db, err := target.Open(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

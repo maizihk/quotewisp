@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sentence-api/internal/database"
 )
 
 type SiteSettings struct {
@@ -20,10 +19,8 @@ func (s *Store) EnsureSettings(ctx context.Context, seed SiteSettings) (SiteSett
 	if err := ValidateSiteSettings(seed); err != nil {
 		return SiteSettings{}, err
 	}
-	q := `INSERT IGNORE INTO site_settings (id, site_name, english_name, slogan, contact, public_origin, repo_url, beian_text, beian_url) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`
-	if database.IsSQLite(s.DB) {
-		q = `INSERT OR IGNORE INTO site_settings (id, site_name, english_name, slogan, contact, public_origin, repo_url, beian_text, beian_url) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`
-	}
+	q := `INSERT OR IGNORE INTO site_settings (id, site_name, english_name, slogan, contact, public_origin, repo_url, beian_text, beian_url) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`
+
 	_, err := s.DB.ExecContext(ctx, q,
 		seed.Name, nullString(seed.EnglishName), nullString(seed.Slogan), seed.Contact, nullString(seed.PublicOrigin), nullString(seed.RepoURL), nullString(seed.BeianText), nullString(seed.BeianURL))
 	if err != nil {
@@ -41,13 +38,9 @@ func (s *Store) UpsertSettings(ctx context.Context, in SiteSettings) error {
 	if err := ValidateSiteSettings(in); err != nil {
 		return err
 	}
-	q := `INSERT INTO site_settings (id, site_name, english_name, slogan, contact, public_origin, repo_url, beian_text, beian_url) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE site_name=?, english_name=?, slogan=?, contact=?, public_origin=?, repo_url=?, beian_text=?, beian_url=?`
+	q := `INSERT INTO site_settings (id, site_name, english_name, slogan, contact, public_origin, repo_url, beian_text, beian_url) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET site_name=excluded.site_name, english_name=excluded.english_name, slogan=excluded.slogan, contact=excluded.contact, public_origin=excluded.public_origin, repo_url=excluded.repo_url, beian_text=excluded.beian_text, beian_url=excluded.beian_url`
 	args := []any{in.Name, nullString(in.EnglishName), nullString(in.Slogan), in.Contact, nullString(in.PublicOrigin), nullString(in.RepoURL), nullString(in.BeianText), nullString(in.BeianURL)}
-	if database.IsSQLite(s.DB) {
-		q = `INSERT INTO site_settings (id, site_name, english_name, slogan, contact, public_origin, repo_url, beian_text, beian_url) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET site_name=excluded.site_name, english_name=excluded.english_name, slogan=excluded.slogan, contact=excluded.contact, public_origin=excluded.public_origin, repo_url=excluded.repo_url, beian_text=excluded.beian_text, beian_url=excluded.beian_url`
-	} else {
-		args = append(args, in.Name, nullString(in.EnglishName), nullString(in.Slogan), in.Contact, nullString(in.PublicOrigin), nullString(in.RepoURL), nullString(in.BeianText), nullString(in.BeianURL))
-	}
+
 	_, err := s.DB.ExecContext(ctx, q,
 		args...)
 	if err != nil {

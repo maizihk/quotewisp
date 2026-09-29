@@ -10,11 +10,11 @@ func env(m map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
 }
 func TestModesAndDefaults(t *testing.T) {
-	c, e := load(ModeService, env(map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db"}))
+	c, e := load(ModeService, env(map[string]string{}))
 	if e != nil {
 		t.Fatal(e)
 	}
-	if c.HTTPAddr != ":8080" || c.MySQLMaxOpenConns != 10 {
+	if c.HTTPAddr != ":8080" {
 		t.Fatalf("bad defaults: %#v", c)
 	}
 }
@@ -29,69 +29,20 @@ func TestSQLiteDefaultsAllModesAndDataDir(t *testing.T) {
 		if err != nil {
 			t.Fatalf("mode %d: %v", mode, err)
 		}
-		if c.MYSQLDSN != "" || !strings.HasSuffix(c.SQLitePath, "/quotewisp.db") {
-			t.Fatalf("mode %d dsn=%q path=%q", mode, c.MYSQLDSN, c.SQLitePath)
+		if !strings.HasSuffix(c.SQLitePath, "/quotewisp.db") {
+			t.Fatalf("mode %d path=%q", mode, c.SQLitePath)
 		}
 	}
 	c, err := load(ModeService, env(map[string]string{"DATA_DIR": "/tmp/custom data"}))
-	if err != nil || c.MYSQLDSN != "" || c.SQLitePath != "/tmp/custom data/quotewisp.db" {
+	if err != nil || c.SQLitePath != "/tmp/custom data/quotewisp.db" {
 		t.Fatalf("custom data dir: %v %#v", err, c)
 	}
 }
 
-func TestEmptyLegacyDSNRejected(t *testing.T) {
-	if _, err := load(ModeService, env(map[string]string{"MYSQL_DSN": ""})); err == nil {
-		t.Fatal("accepted empty MYSQL_DSN")
-	}
-	for _, dsn := range []string{"sqlite:u:p@tcp(localhost:3306)/db", "sqlitefile:u:p@tcp(localhost:3306)/db"} {
-		c, err := load(ModeService, env(map[string]string{"MYSQL_DSN": dsn}))
-		if err != nil || c.MYSQLDSN != dsn || c.SQLitePath != "" {
-			t.Fatalf("legacy DSN %q changed: err=%v config=%+v", dsn, err, c)
-		}
-	}
-}
-
-func TestDatabaseEnvironment(t *testing.T) {
-	m := map[string]string{"DB_HOST": "2001:db8::1", "DB_NAME": "app", "DB_USER": "user", "DB_PASSWORD": " p@ss?&/ ", "DB_PORT": "3307", "DB_TLS": "true"}
-	c, err := load(ModeImport, env(m))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"user: p@ss?&/ @tcp([2001:db8::1]:3307)/app", "parseTime=true", "charset=utf8mb4", "tls=true"} {
-		if !strings.Contains(c.MYSQLDSN, want) {
-			t.Fatalf("DSN %q missing %q", c.MYSQLDSN, want)
-		}
-	}
-	for _, k := range []string{"DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"} {
-		bad := map[string]string{"DB_HOST": "h", "DB_NAME": "n", "DB_USER": "u", "DB_PASSWORD": "p"}
-		delete(bad, k)
-		if _, err := load(ModeImport, env(bad)); err == nil {
-			t.Fatalf("accepted incomplete %s", k)
-		}
-	}
-	for _, p := range []string{"0", "65536", "bad"} {
-		m["DB_PORT"] = p
-		if _, err := load(ModeImport, env(m)); err == nil {
-			t.Fatalf("accepted port %s", p)
-		}
-	}
-	delete(m, "DB_PORT")
-	if _, err := load(ModeImport, env(m)); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestDatabaseMixingRejected(t *testing.T) {
-	m := map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "DB_HOST": "h", "DB_NAME": "n", "DB_USER": "u", "DB_PASSWORD": "p"}
-	if _, err := load(ModeImport, env(m)); err == nil {
-		t.Fatal("accepted mixed database configuration")
-	}
-}
-
 func TestCombinedDefaultsAndWebRequirements(t *testing.T) {
-	base := map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
+	base := map[string]string{"WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
 	c, err := load(ModeCombined, env(base))
-	if err != nil || c.HTTPAddr != ":8080" || c.MySQLMaxOpenConns != 10 || c.SnapshotLoadTimeout != 30*time.Second {
+	if err != nil || c.HTTPAddr != ":8080" || c.SnapshotLoadTimeout != 30*time.Second {
 		t.Fatalf("combined defaults: %v %#v", err, c)
 	}
 	bad := map[string]string{}
@@ -105,11 +56,10 @@ func TestCombinedDefaultsAndWebRequirements(t *testing.T) {
 }
 
 func TestCombinedServiceValidation(t *testing.T) {
-	base := map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
+	base := map[string]string{"WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
 	for _, patch := range []map[string]string{
 		{"SNAPSHOT_LOAD_TIMEOUT": "0s"}, {"SNAPSHOT_LOAD_TIMEOUT": "garbage"},
 		{"RELOAD_TOKEN": "contains whitespace and is long enough 12345678901234567890"},
-		{"MYSQL_MAX_IDLE_CONNS": "11", "MYSQL_MAX_OPEN_CONNS": "10"},
 	} {
 		m := map[string]string{}
 		for k, v := range base {
@@ -123,15 +73,10 @@ func TestCombinedServiceValidation(t *testing.T) {
 		}
 	}
 }
-func TestImportValidatesPool(t *testing.T) {
-	_, e := load(ModeImport, env(map[string]string{"MYSQL_DSN": "x/db", "MYSQL_MAX_OPEN_CONNS": "0"}))
-	if e == nil {
-		t.Fatal("accepted invalid import pool")
-	}
-}
+
 func TestServiceValidation(t *testing.T) {
-	cases := []map[string]string{{"MYSQL_DSN": "x/db", "HTTP_ADDR": "nope"}, {"MYSQL_DSN": "x/db", "RELOAD_TOKEN": "short"}, {"MYSQL_DSN": "x/db", "CORS_ALLOWED_ORIGINS": "https://*.example.com"}, {"MYSQL_DSN": "x/db", "CORS_ALLOWED_ORIGINS": "https://example.com?"}, {"MYSQL_DSN": "x/db", "TRUSTED_PROXY_CIDRS": "bad"}}
-	cases = append(cases, map[string]string{"MYSQL_DSN": "x/db", "HTTP_ADDR": ":0"}, map[string]string{"MYSQL_DSN": "x/db", "HTTP_ADDR": ":65536"}, map[string]string{"MYSQL_DSN": "x/db", "CORS_ALLOWED_ORIGINS": "https://example.com#"}, map[string]string{"MYSQL_DSN": "x/db", "CORS_ALLOWED_ORIGINS": "http://:80"}, map[string]string{"MYSQL_DSN": "x/db", "TRUSTED_PROXY_CIDRS": "::ffff:0:0/80"})
+	cases := []map[string]string{{"HTTP_ADDR": "nope"}, {"RELOAD_TOKEN": "short"}, {"CORS_ALLOWED_ORIGINS": "https://*.example.com"}, {"CORS_ALLOWED_ORIGINS": "https://example.com?"}, {"TRUSTED_PROXY_CIDRS": "bad"}}
+	cases = append(cases, map[string]string{"HTTP_ADDR": ":0"}, map[string]string{"HTTP_ADDR": ":65536"}, map[string]string{"CORS_ALLOWED_ORIGINS": "https://example.com#"}, map[string]string{"CORS_ALLOWED_ORIGINS": "http://:80"}, map[string]string{"TRUSTED_PROXY_CIDRS": "::ffff:0:0/80"})
 	for _, x := range cases {
 		if _, e := load(ModeService, env(x)); e == nil {
 			t.Fatalf("accepted %#v", x)
@@ -143,26 +88,26 @@ var webSecret = strings.Repeat("a", 32)
 
 func TestWebRequiredMissing(t *testing.T) {
 	for _, x := range []map[string]string{{"WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}} {
-		if c, e := load(ModeWeb, env(x)); e != nil || c.MYSQLDSN != "" || c.SQLitePath == "" {
+		if c, e := load(ModeWeb, env(x)); e != nil || c.SQLitePath == "" {
 			t.Fatalf("default SQLite rejected: %v %#v", e, c)
 		}
 	}
 }
 func TestWebDefaults(t *testing.T) {
 	c, e := load(ModeWeb, env(map[string]string{
-		"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com",
+		"WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com",
 	}))
 	if e != nil {
 		t.Fatal(e)
 	}
 	if c.HTTPAddr != ":8081" || !c.CookieSecure || c.SubmissionRatePerHour != 5 || c.SubmissionRatePerDay != 20 ||
 		c.SubmissionPendingLimit != 1000 || c.SubmissionRetention != 2160*time.Hour || c.SnapshotPollInterval != time.Minute ||
-		c.MySQLMaxOpenConns != 10 || c.ShutdownTimeout != 10*time.Second || c.APIMetricsURL != "" {
+		c.ShutdownTimeout != 10*time.Second || c.APIMetricsURL != "" {
 		t.Fatalf("bad defaults: %#v", c)
 	}
 }
 func TestWebValidation(t *testing.T) {
-	base := map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
+	base := map[string]string{"WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}
 	cases := []map[string]string{
 		{"HTTP_ADDR": "nope"},
 		{"HTTP_ADDR": ":0"},
@@ -218,20 +163,8 @@ func TestWebValidation(t *testing.T) {
 	}
 }
 func TestWebAdminRequiredMissing(t *testing.T) {
-	if c, e := load(ModeWebAdmin, env(map[string]string{})); e != nil || c.MYSQLDSN != "" || c.SQLitePath == "" {
+	if c, e := load(ModeWebAdmin, env(map[string]string{})); e != nil || c.SQLitePath == "" {
 		t.Fatalf("default SQLite rejected: %v %#v", e, c)
-	}
-}
-func TestWebAdminDefaultsAndPool(t *testing.T) {
-	c, e := load(ModeWebAdmin, env(map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db"}))
-	if e != nil {
-		t.Fatal(e)
-	}
-	if c.MySQLMaxOpenConns != 10 || c.MySQLMaxIdleConns != 5 {
-		t.Fatalf("bad defaults: %#v", c)
-	}
-	if _, e = load(ModeWebAdmin, env(map[string]string{"MYSQL_DSN": "u:p@tcp(localhost:3306)/db", "MYSQL_MAX_OPEN_CONNS": "0"})); e == nil {
-		t.Fatal("accepted invalid pool")
 	}
 }
 
@@ -257,6 +190,19 @@ func TestWebImportLimits(t *testing.T) {
 		c, err = load(mode, env(values))
 		if err != nil || c.ImportMaxUploadBytes != 1234 || c.ImportUploadTTL != 5*time.Minute || c.ImportTimeout != 10*time.Second {
 			t.Fatalf("custom limits: %v %+v", err, c)
+		}
+	}
+}
+
+func TestRemovedDatabaseConfigurationRejected(t *testing.T) {
+	for _, mode := range []Mode{ModeService, ModeImport, ModeMigrate, ModeWeb, ModeWebAdmin, ModeCombined} {
+		for _, key := range []string{"MYSQL_DSN", "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_TLS", "MYSQL_MAX_OPEN_CONNS", "MYSQL_MAX_IDLE_CONNS", "MYSQL_CONN_MAX_LIFETIME"} {
+			for _, value := range []string{"", "private-value"} {
+				_, err := load(mode, env(map[string]string{key: value}))
+				if err == nil || !strings.Contains(err.Error(), "no longer supported") || strings.Contains(err.Error(), "private-value") {
+					t.Fatalf("mode=%d key=%s err=%v", mode, key, err)
+				}
+			}
 		}
 	}
 }

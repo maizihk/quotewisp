@@ -53,7 +53,7 @@ func (s *Store) CreateInitialAdmin(ctx context.Context, username, passwordHash s
 	}
 	defer tx.Rollback()
 	var version uint64
-	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id=1"+lockSuffix(s.DB)).Scan(&version); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id=1").Scan(&version); err != nil {
 		return 0, errors.New("lock administrator initialization")
 	}
 	var existing uint64
@@ -148,7 +148,7 @@ func (s *Store) SetAdminEnabled(ctx context.Context, id uint64, enabled bool) er
 	}
 	defer tx.Rollback()
 	if !enabled {
-		rows, err := tx.QueryContext(ctx, "SELECT id FROM admin_users WHERE enabled = TRUE ORDER BY id"+lockSuffix(s.DB))
+		rows, err := tx.QueryContext(ctx, "SELECT id FROM admin_users WHERE enabled = TRUE ORDER BY id")
 		if err != nil {
 			return errors.New("lock enabled admins")
 		}
@@ -191,7 +191,7 @@ func (s *Store) SetAdminEnabled(ctx context.Context, id uint64, enabled bool) er
 		}
 	} else {
 		var curEnabled bool
-		if err = tx.QueryRowContext(ctx, "SELECT enabled FROM admin_users WHERE id = ?"+lockSuffix(s.DB), id).Scan(&curEnabled); errors.Is(err, sql.ErrNoRows) {
+		if err = tx.QueryRowContext(ctx, "SELECT enabled FROM admin_users WHERE id = ?", id).Scan(&curEnabled); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return errors.New("read admin")
@@ -227,7 +227,7 @@ func (s *Store) resetAdminPassword(ctx context.Context, id uint64, hash string, 
 	}
 	defer tx.Rollback()
 	var currentHash string
-	if err = tx.QueryRowContext(ctx, "SELECT password_hash FROM admin_users WHERE id = ?"+lockSuffix(s.DB), id).Scan(&currentHash); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, "SELECT password_hash FROM admin_users WHERE id = ?", id).Scan(&currentHash); errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return errors.New("lock admin")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sentence-api/internal/database"
 )
 
 type Category struct {
@@ -18,10 +17,8 @@ type Category struct {
 }
 
 func (s *Store) ListCategoriesAdmin(ctx context.Context) ([]Category, error) {
-	categoryOrder := "BINARY c.code ASC"
-	if database.IsSQLite(s.DB) {
-		categoryOrder = "c.code COLLATE BINARY ASC"
-	}
+	categoryOrder := "c.code COLLATE BINARY ASC"
+
 	rows, err := s.DB.QueryContext(ctx, `SELECT c.id, c.code, c.name, c.sort_order, c.enabled,
 		COALESCE(SUM(CASE WHEN s.status = 1 THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN s.status = 3 THEN 1 ELSE 0 END), 0)
@@ -94,7 +91,7 @@ func (s *Store) UpdateCategory(ctx context.Context, code, name string, sortOrder
 	return s.withVersionTx(ctx, func(tx *sql.Tx) (bool, error) {
 		var curName string
 		var curOrder int32
-		err := tx.QueryRowContext(ctx, "SELECT name, sort_order FROM categories WHERE code = ?"+lockSuffix(s.DB), code).
+		err := tx.QueryRowContext(ctx, "SELECT name, sort_order FROM categories WHERE code = ?", code).
 			Scan(&curName, &curOrder)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrNotFound
@@ -116,7 +113,7 @@ func (s *Store) SetCategoryEnabled(ctx context.Context, code string, enabled boo
 	return s.withVersionTx(ctx, func(tx *sql.Tx) (bool, error) {
 		var curEnabled bool
 		var id uint64
-		err := tx.QueryRowContext(ctx, "SELECT id, enabled FROM categories WHERE code = ?"+lockSuffix(s.DB), code).Scan(&id, &curEnabled)
+		err := tx.QueryRowContext(ctx, "SELECT id, enabled FROM categories WHERE code = ?", code).Scan(&id, &curEnabled)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrNotFound
 		}

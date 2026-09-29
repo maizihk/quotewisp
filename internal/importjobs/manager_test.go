@@ -2,20 +2,16 @@ package importjobs
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
+	"sentence-api/internal/database"
+	"sentence-api/internal/importer"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/go-sql-driver/mysql"
-	"sentence-api/internal/database"
-	"sentence-api/internal/importer"
 )
 
 const managerInput = `{"categories":[{"code":"x","name":"X"}],"sentences":[{"uuid":"75a45fd4-4f2f-45eb-80cb-6f0a7bcdfaf2","category":"x","content":"hello"}]}`
@@ -40,7 +36,7 @@ func newManagerFixtureTarget(t *testing.T, target database.Target, uploadDir str
 	if err := target.MigrateUp(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := target.Open(context.Background(), database.PoolConfig{MaxOpenConns: 4, MaxIdleConns: 2, ConnMaxLifetime: time.Minute})
+	db, err := target.Open(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,46 +60,6 @@ func newManagerFixtureTarget(t *testing.T, target database.Target, uploadDir str
 		db.Close()
 	})
 	return f
-}
-
-func mysqlManagerTarget(t *testing.T) (database.Target, func()) {
-	t.Helper()
-	raw := os.Getenv("MYSQL_TEST_DSN")
-	if raw == "" {
-		t.Skip("MYSQL_TEST_DSN is not set; MySQL manager test skipped")
-	}
-	cfg, err := mysql.ParseDSN(raw)
-	if err != nil {
-		t.Fatal("MYSQL_TEST_DSN is invalid")
-	}
-	adminDB := cfg.DBName
-	if adminDB == "" {
-		adminDB = "mysql"
-	}
-	cfg.DBName = adminDB
-	cfg.ParseTime = true
-	admin, err := sql.Open("mysql", cfg.FormatDSN())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = admin.Close() })
-	var suffix [8]byte
-	if _, err = rand.Read(suffix[:]); err != nil {
-		t.Fatal(err)
-	}
-	name := "sentence_api_importjobs_" + hex.EncodeToString(suffix[:])
-	if _, err = admin.Exec("CREATE DATABASE `" + name + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"); err != nil {
-		t.Fatal("create isolated manager database:", err)
-	}
-	cleanup := func() {
-		cleanCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if _, err := admin.ExecContext(cleanCtx, "DROP DATABASE `"+name+"`"); err != nil {
-			t.Errorf("drop isolated manager database: %v", err)
-		}
-	}
-	cfg.DBName = name
-	return database.Target{MySQLDSN: cfg.FormatDSN()}, cleanup
 }
 
 func waitJob(t *testing.T, m *Manager, owner uint64, id string, want ...string) Job {
@@ -271,7 +227,7 @@ func TestManagerRecoveryMarksInterruptedAndRefreshesCommitted(t *testing.T) {
 	if err := target.MigrateUp(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := target.Open(context.Background(), database.PoolConfig{})
+	db, err := target.Open(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,10 +274,9 @@ func TestManagerRecoveryMarksInterruptedAndRefreshesCommitted(t *testing.T) {
 	_ = m
 }
 
-func TestManagerMySQLRefreshRetryAndRecovery(t *testing.T) {
-	target, drop := mysqlManagerTarget(t)
-	t.Cleanup(drop)
+func TestManagerSQLiteRefreshRetryAndRecovery(t *testing.T) {
 	dir := t.TempDir()
+	target := database.Target{SQLitePath: filepath.Join(dir, "jobs.db")}
 	fail := true
 	f := newManagerFixtureTarget(t, target, filepath.Join(dir, "uploads"), time.Minute, func() error {
 		if fail {
@@ -340,7 +295,7 @@ func TestManagerMySQLRefreshRetryAndRecovery(t *testing.T) {
 	waitJob(t, f.m, 9, j.ID, "refresh_failed")
 	var n int
 	if err = f.db.QueryRow("SELECT COUNT(*) FROM sentences").Scan(&n); err != nil || n != 1 {
-		t.Fatalf("MySQL committed sentences=%d err=%v", n, err)
+		t.Fatalf("SQLite committed sentences=%d err=%v", n, err)
 	}
 	fail = false
 	if err = f.m.RetryRefresh(context.Background(), 9, j.ID); err != nil {
@@ -348,7 +303,7 @@ func TestManagerMySQLRefreshRetryAndRecovery(t *testing.T) {
 	}
 	waitJob(t, f.m, 9, j.ID, "complete")
 	if err = f.db.QueryRow("SELECT COUNT(*) FROM sentences").Scan(&n); err != nil || n != 1 {
-		t.Fatalf("MySQL duplicate sentences=%d err=%v", n, err)
+		t.Fatalf("SQLite duplicate sentences=%d err=%v", n, err)
 	}
 
 	// A fresh manager reconciles committed work and removes private uploads.
@@ -374,9 +329,9 @@ func TestManagerMySQLRefreshRetryAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	if status != "refresh_failed" {
-		t.Fatalf("MySQL recovered status=%s", status)
+		t.Fatalf("SQLite recovered status=%s", status)
 	}
 	if _, err = os.Stat(f.m.path(j.ID)); !os.IsNotExist(err) {
-		t.Fatalf("MySQL recovered upload retained: %v", err)
+		t.Fatalf("SQLite recovered upload retained: %v", err)
 	}
 }

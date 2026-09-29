@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sentence-api/internal/database"
 	"time"
 )
 
@@ -24,10 +23,8 @@ type Overview struct {
 func (s *Store) AdminOverview(ctx context.Context) (Overview, error) {
 	var out Overview
 	var published sql.NullTime
-	recent := "(SELECT COUNT(*) FROM submissions WHERE created_at >= UTC_TIMESTAMP(6) - INTERVAL 24 HOUR)"
-	if database.IsSQLite(s.DB) {
-		recent = "(SELECT COUNT(*) FROM submissions WHERE julianday(created_at) >= julianday('now','-24 hours'))"
-	}
+	recent := "(SELECT COUNT(*) FROM submissions WHERE julianday(created_at) >= julianday('now','-24 hours'))"
+
 	err := s.DB.QueryRowContext(ctx, `
 SELECT
 	(SELECT COUNT(*) FROM sentences WHERE status = 1),

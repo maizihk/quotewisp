@@ -15,7 +15,7 @@ sentence-api import --file sentences.json
 sentence-api import --file sentences.json --dry-run
 ```
 
-未设置数据库变量时使用 `DATA_DIR/quotewisp.db`；也可通过完整的 `DB_*` 配置或 `MYSQL_DSN` 提供目标数据库。当前部署验收基线为 MariaDB 11.8，MySQL 8.4 为待单独验证的兼容目标。数据库必须已经完成迁移。正式导入使用具备必要写入权限的账号；dry-run 只读取数据库。
+数据库仅使用 `DATA_DIR/quotewisp.db`，必须已完成迁移。CLI 导入与 dry-run 均访问该文件，dry-run 不写入业务数据；临时目录和数据目录需具备相应权限。
 
 导入总期限由 `IMPORT_TIMEOUT` 控制，默认 120 秒，可按实际数据规模调整。CLI 不设置文件大小、语句条目数或分类条目数上限，不根据 API 内存参考值拒绝导入。流式解析文件并减少原始文件与解码数据的重复驻留；写入前仍完整校验全部数据。部署资源按实际导入规模配置。
 
@@ -100,7 +100,7 @@ sentence-api import --file sentences.json --dry-run
 
 去重键是规范化为小写标准形式的 UUID。
 
-业务字段比较包括 `category`、`content`、规范化后的 `source`、`author`。分类与内容按字节精确比较，不依赖 MySQL 的语言排序规则；计算长度也必须相同。
+业务字段比较包括 `category`、`content`、规范化后的 `source`、`author`。分类与内容按字节精确比较，不依赖语言排序规则；计算长度也必须相同。
 
 | 情况 | 行为 |
 | --- | --- |
@@ -145,7 +145,7 @@ sentence-api import --file sentences.json --dry-run
 - 不锁定未来执行结果，不保证之后的正式导入仍会成功。
 - 正式导入必须重新校验并处理期间出现的并发变更。
 
-未提供可用的 `MYSQL_DSN`、数据库不兼容或连接失败时，dry-run 失败，不退化为仅文件校验后宣称通过。
+SQLite 文件不可用、数据库不兼容或连接失败时，dry-run 失败，不退化为仅文件校验后宣称通过。
 
 ## 6. 输出与退出码
 

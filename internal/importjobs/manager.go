@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"sentence-api/internal/database"
 	"sentence-api/internal/importer"
 )
 
@@ -491,7 +490,7 @@ func (m *Manager) committed(ctx context.Context, id string) (bool, error) {
 	}
 	defer tx.Rollback()
 	var status string
-	if err = tx.QueryRowContext(ctx, "SELECT status FROM import_jobs WHERE id=?"+database.ForUpdate(m.opts.DB), id).Scan(&status); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT status FROM import_jobs WHERE id=?", id).Scan(&status); err != nil {
 		return false, err
 	}
 	if err = tx.Commit(); err != nil {
