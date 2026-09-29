@@ -49,7 +49,7 @@ unset admin_password
 
 ## 管理与导入
 
-后台支持语句、分类、投稿审核、管理员及站点设置。批量导入仍通过命令行完成，本次没有后台文件导入界面：
+后台支持语句、分类、投稿审核、管理员及站点设置。登录后进入 `/admin/imports`，可上传原生 JSON 或 Hitokoto JSON，查看预览后确认导入。任务异步执行，结果分别显示数据写入与快照刷新；刷新失败可单独重试。原生命令行导入继续可用：
 
 ```bash
 DATA_DIR=./data ./bin/sentence-api import --file testdata/sentences.json --dry-run
@@ -75,4 +75,4 @@ SQLite 集成测试不依赖外部服务。设置 `MYSQL_TEST_DSN` 后，MariaDB
 
 SQLite 使用 WAL。备份时停止应用后复制整个数据目录（含数据库、WAL/SHM 和密钥），或使用 SQLite 一致性备份工具；禁止运行中只复制 `quotewisp.db`。恢复前停止应用，保留原文件并恢复目录权限。高于当前程序支持的数据库版本会拒绝启动，不会自动降级。详见 [运行与回滚](docs/operations.md)。
 
-后续后台导入计划见 [下一阶段开发计划](docs/next-development.md)。`docs/deployment-*.md` 和单容器部署记录是历史验收记录，不代表本地改动已经发布或生产已经升级。
+阶段目标与验收范围见 [下一阶段开发计划](docs/next-development.md)。`docs/deployment-*.md` 和单容器部署记录是历史验收记录，不代表本地改动已经发布或生产已经升级。

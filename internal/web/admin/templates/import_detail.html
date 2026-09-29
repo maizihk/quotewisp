@@ -1,0 +1,13 @@
+{{define "import_detail"}}{{template "admin_layout" .}}{{end}}
+{{define "title"}}导入详情{{end}}
+{{define "content"}}
+<div class="page-heading"><div><p class="eyebrow">数据导入</p><h1>导入 {{.Data.Job.ID}}</h1></div><span class="status-badge">{{.Data.Job.StatusLabel}}</span></div>
+<p><a href="/admin/imports">返回导入列表</a>　格式：{{.Data.Job.FormatLabel}}　摘要指纹：<code>{{.Data.Job.Digest}}</code></p>
+{{if .Data.Job.HasResult}}<h2>{{if .Data.Job.Committed}}已提交结果{{else}}预览统计（尚未写入）{{end}}</h2><div class="table-shell"><table><thead><tr><th>总数</th><th>文件内重复</th><th>新增</th><th>数据库重复</th></tr></thead><tbody><tr><td>{{.Data.Job.Result.InputCount}}</td><td>{{.Data.InFileDuplicates}}</td><td>{{.Data.Job.Result.NewSentences}}</td><td>{{.Data.DatabaseDuplicates}}</td></tr></tbody></table></div>{{end}}
+{{if .Data.Job.Committed}}<p>数据提交已确认；{{if eq .Data.Job.Status "complete"}}API 与前台快照刷新已完成。{{else}}快照刷新尚未完成。{{end}}版本：{{.Data.Job.Result.DatasetVersionBefore}} → {{.Data.Job.Result.DatasetVersionAfter}}。</p>{{end}}
+{{if .Data.Job.Categories}}<h2>分类映射</h2><div class="table-shell"><table><thead><tr><th>代码</th><th>名称</th><th>操作</th></tr></thead><tbody>{{range .Data.Job.Categories}}<tr><td>{{.Code}}</td><td>{{.Name}}</td><td>{{if .Create}}创建{{else}}使用已有{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}
+{{if .Data.Job.Error}}<div class="flash">{{.Data.Job.Error}}</div>{{end}}
+{{if eq .Data.Job.Status "preview"}}<form method="post" action="/admin/imports/{{.Data.Job.ID}}/confirm"><input type="hidden" name="csrf_token" value="{{.Data.CSRF}}"><input type="hidden" name="digest" value="{{.Data.Job.Digest}}"><button class="button" type="submit">确认导入</button></form>{{end}}
+{{if eq .Data.Job.Status "preview"}}<form method="post" action="/admin/imports/{{.Data.Job.ID}}/cancel"><input type="hidden" name="csrf_token" value="{{.Data.CSRF}}"><button type="submit">取消</button></form>{{end}}
+{{if eq .Data.Job.Status "refresh_failed"}}<form method="post" action="/admin/imports/{{.Data.Job.ID}}/refresh"><input type="hidden" name="csrf_token" value="{{.Data.CSRF}}"><button class="button" type="submit">重试刷新</button></form>{{end}}
+{{end}}

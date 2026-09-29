@@ -210,7 +210,7 @@ func runService() error {
 	web, _, err := buildWebHandler(c, db, life, metrics, logger, &bg, &stopping, func() { controller.start(true, nil) }, func(context.Context) admin.APIUsage {
 		v := metrics.APIRequestTotals()
 		return admin.APIUsage{OK: v.OK, Random: v.Random, UUID: v.UUID, Categories: v.Categories}
-	})
+	}, controller.refreshAndWait)
 	if err != nil {
 		db.Close()
 		return err

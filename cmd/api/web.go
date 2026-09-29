@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"sentence-api/internal/config"
 	"sentence-api/internal/httpmw"
+	"sentence-api/internal/importjobs"
 	"sentence-api/internal/observability"
 	"sentence-api/internal/web/admin"
 	"sentence-api/internal/web/auth"
@@ -44,7 +46,7 @@ func runWeb(args []string) error {
 // buildWebHandler constructs the site against the caller's database and
 // lifecycle. It is shared by the combined server so the process has one pool
 // and one set of metrics.
-func buildWebHandler(c config.Config, db *sql.DB, life context.Context, metrics *observability.Metrics, logger *slog.Logger, bg *sync.WaitGroup, stopping *atomic.Bool, onChange func(), apiUsage func(context.Context) admin.APIUsage) (http.Handler, *publicdata.Cache, error) {
+func buildWebHandler(c config.Config, db *sql.DB, life context.Context, metrics *observability.Metrics, logger *slog.Logger, bg *sync.WaitGroup, stopping *atomic.Bool, onChange func(), apiUsage func(context.Context) admin.APIUsage, refreshAPI ...func(context.Context) error) (http.Handler, *publicdata.Cache, error) {
 	st := store.New(db)
 	metrics.EnableWeb()
 	initCtx, cancel := context.WithTimeout(life, c.SnapshotLoadTimeout)
@@ -68,7 +70,41 @@ func buildWebHandler(c config.Config, db *sql.DB, life context.Context, metrics 
 	if err != nil {
 		return nil, nil, err
 	}
-	adm, err := admin.New(admin.Deps{Store: st, Renderer: renderer, Logger: logger, Metrics: webAdminMetrics{metrics}, Logins: logins, Tokens: tokens, CookieSecure: c.CookieSecure, OnChange: func() {
+	imports, err := importjobs.New(life, importjobs.Options{
+		DB: db, Dir: filepath.Join(c.DataDir, "imports", "uploads"), MaxBytes: c.ImportMaxUploadBytes,
+		TTL: c.ImportUploadTTL, Timeout: c.ImportTimeout,
+		Refresh: func(ctx context.Context) error {
+			refreshCtx, stop := context.WithTimeout(ctx, c.SnapshotLoadTimeout)
+			defer stop()
+			version, err := st.DatasetVersion(refreshCtx)
+			if err != nil {
+				return err
+			}
+			if len(refreshAPI) == 0 || refreshAPI[0] == nil {
+				return errors.New("API refresh unavailable")
+			}
+			if err = refreshAPI[0](refreshCtx); err != nil {
+				return err
+			}
+			cache.Refresh()
+			tick := time.NewTicker(25 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				if current := cache.Current(); current != nil && current.Version >= version {
+					return nil
+				}
+				select {
+				case <-refreshCtx.Done():
+					return refreshCtx.Err()
+				case <-tick.C:
+				}
+			}
+		},
+	}, bg)
+	if err != nil {
+		return nil, nil, errors.New("initialize background imports")
+	}
+	adm, err := admin.New(admin.Deps{Imports: imports, ImportMaxBytes: c.ImportMaxUploadBytes, Store: st, Renderer: renderer, Logger: logger, Metrics: webAdminMetrics{metrics}, Logins: logins, Tokens: tokens, CookieSecure: c.CookieSecure, OnChange: func() {
 		cache.Refresh()
 		if onChange != nil {
 			onChange()

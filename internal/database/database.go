@@ -26,7 +26,7 @@ import (
 
 const (
 	MinReadSchemaVersion  uint = 1
-	CurrentSchemaVersion  uint = 4
+	CurrentSchemaVersion  uint = 5
 	RequiredSchemaVersion      = CurrentSchemaVersion
 )
 
@@ -134,8 +134,10 @@ func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, errors.New("open sqlite database")
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	// WAL readers (sessions and import status) must remain available during a
+	// long import. BEGIN IMMEDIATE still serializes all writing transactions.
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 	if err = db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, errors.New("ping database")
@@ -462,9 +464,13 @@ func sqliteMigration(db *sql.DB, version uint, up bool) error {
 			stmts = []string{`CREATE TABLE site_settings (id INTEGER PRIMARY KEY, site_name TEXT NOT NULL, contact TEXT NOT NULL, public_origin TEXT, repo_url TEXT, beian_text TEXT, beian_url TEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`}
 		case 4:
 			stmts = []string{`ALTER TABLE site_settings ADD COLUMN english_name TEXT`, `ALTER TABLE site_settings ADD COLUMN slogan TEXT`}
+		case 5:
+			stmts = []string{`CREATE TABLE import_jobs (id TEXT PRIMARY KEY COLLATE BINARY NOT NULL, admin_id INTEGER NOT NULL, digest TEXT NOT NULL COLLATE BINARY, format TEXT NOT NULL, status TEXT NOT NULL, result_json TEXT, error_text TEXT, categories_json TEXT, created_at DATETIME NOT NULL, expires_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)`, `CREATE INDEX idx_import_jobs_admin_created ON import_jobs(admin_id,created_at)`, `CREATE INDEX idx_import_jobs_status_expires ON import_jobs(status,expires_at)`}
 		}
 	} else {
 		switch version {
+		case 5:
+			stmts = []string{`DROP TABLE import_jobs`}
 		case 4:
 			stmts = []string{`ALTER TABLE site_settings DROP COLUMN slogan`, `ALTER TABLE site_settings DROP COLUMN english_name`}
 		case 3:

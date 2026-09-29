@@ -234,3 +234,29 @@ func TestWebAdminDefaultsAndPool(t *testing.T) {
 		t.Fatal("accepted invalid pool")
 	}
 }
+
+func TestWebImportLimits(t *testing.T) {
+	for _, mode := range []Mode{ModeWeb, ModeCombined} {
+		values := map[string]string{"SITE_CONTACT": "test@example.com"}
+		c, err := load(mode, env(values))
+		if err != nil || c.ImportMaxUploadBytes != 32<<20 || c.ImportUploadTTL != 30*time.Minute || c.ImportTimeout != 120*time.Second {
+			t.Fatalf("defaults: %v %+v", err, c)
+		}
+		for key, bad := range map[string][]string{"IMPORT_MAX_UPLOAD_BYTES": {"0", "-1", "1073741825", "oops"}, "IMPORT_UPLOAD_TTL": {"0s", "-1s", "oops"}, "IMPORT_TIMEOUT": {"0s", "oops"}} {
+			for _, v := range bad {
+				values[key] = v
+				if _, err := load(mode, env(values)); err == nil {
+					t.Fatalf("accepted %s=%s", key, v)
+				}
+			}
+			delete(values, key)
+		}
+		values["IMPORT_MAX_UPLOAD_BYTES"] = "1234"
+		values["IMPORT_UPLOAD_TTL"] = "5m"
+		values["IMPORT_TIMEOUT"] = "10s"
+		c, err = load(mode, env(values))
+		if err != nil || c.ImportMaxUploadBytes != 1234 || c.ImportUploadTTL != 5*time.Minute || c.ImportTimeout != 10*time.Second {
+			t.Fatalf("custom limits: %v %+v", err, c)
+		}
+	}
+}

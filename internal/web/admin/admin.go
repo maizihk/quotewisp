@@ -31,32 +31,36 @@ type Metrics interface {
 
 // Deps configures the admin HTTP handler.
 type Deps struct {
-	Store         *store.Store
-	Renderer      *render.Renderer
-	Logger        *slog.Logger
-	Metrics       Metrics
-	Logins        *auth.LoginLimiter
-	Tokens        *render.FormTokens
-	CookieSecure  bool
-	OnChange      func()
-	APIMetricsURL string
-	APIUsage      func(context.Context) APIUsage
+	Store          *store.Store
+	Renderer       *render.Renderer
+	Logger         *slog.Logger
+	Metrics        Metrics
+	Logins         *auth.LoginLimiter
+	Tokens         *render.FormTokens
+	CookieSecure   bool
+	OnChange       func()
+	APIMetricsURL  string
+	APIUsage       func(context.Context) APIUsage
+	Imports        ImportService
+	ImportMaxBytes int64
 }
 
 type handler struct {
-	store         *store.Store
-	renderer      *render.Renderer
-	logger        *slog.Logger
-	metrics       Metrics
-	logins        *auth.LoginLimiter
-	tokens        *render.FormTokens
-	cookieSecure  bool
-	onChange      func()
-	apiMetricsURL string
-	apiUsage      func(context.Context) APIUsage
-	dummyHash     string
-	mux           *http.ServeMux
-	settingsMu    sync.Mutex
+	store          *store.Store
+	renderer       *render.Renderer
+	logger         *slog.Logger
+	metrics        Metrics
+	logins         *auth.LoginLimiter
+	tokens         *render.FormTokens
+	cookieSecure   bool
+	onChange       func()
+	apiMetricsURL  string
+	apiUsage       func(context.Context) APIUsage
+	imports        ImportService
+	importMaxBytes int64
+	dummyHash      string
+	mux            *http.ServeMux
+	settingsMu     sync.Mutex
 }
 
 type noopMetrics struct{}
@@ -91,17 +95,19 @@ func New(d Deps) (http.Handler, error) {
 		return nil, fmt.Errorf("admin: dummy hash: %w", err)
 	}
 	h := &handler{
-		store:         d.Store,
-		renderer:      d.Renderer,
-		logger:        d.Logger,
-		metrics:       d.Metrics,
-		logins:        d.Logins,
-		tokens:        d.Tokens,
-		cookieSecure:  d.CookieSecure,
-		onChange:      d.OnChange,
-		apiMetricsURL: d.APIMetricsURL,
-		apiUsage:      d.APIUsage,
-		dummyHash:     dummyHash,
+		store:          d.Store,
+		renderer:       d.Renderer,
+		logger:         d.Logger,
+		metrics:        d.Metrics,
+		logins:         d.Logins,
+		tokens:         d.Tokens,
+		cookieSecure:   d.CookieSecure,
+		onChange:       d.OnChange,
+		apiMetricsURL:  d.APIMetricsURL,
+		apiUsage:       d.APIUsage,
+		imports:        d.Imports,
+		importMaxBytes: d.ImportMaxBytes,
+		dummyHash:      dummyHash,
 	}
 	h.registerRoutes()
 	return h.serve(), nil
@@ -133,6 +139,11 @@ var routeRules = []struct {
 	{regexp.MustCompile(`^/admin/users/\d+/enable$`), "/admin/users/{id}/enable"},
 	{regexp.MustCompile(`^/admin/users$`), "/admin/users"},
 	{regexp.MustCompile(`^/admin/settings$`), "/admin/settings"},
+	{regexp.MustCompile(`^/admin/imports/[0-9A-Za-z_-]+/confirm$`), "/admin/imports/{id}/confirm"},
+	{regexp.MustCompile(`^/admin/imports/[0-9A-Za-z_-]+/cancel$`), "/admin/imports/{id}/cancel"},
+	{regexp.MustCompile(`^/admin/imports/[0-9A-Za-z_-]+/refresh$`), "/admin/imports/{id}/refresh"},
+	{regexp.MustCompile(`^/admin/imports/[0-9A-Za-z_-]+$`), "/admin/imports/{id}"},
+	{regexp.MustCompile(`^/admin/imports$`), "/admin/imports"},
 	{regexp.MustCompile(`^/admin/?$`), "/admin/"},
 }
 

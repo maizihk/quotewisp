@@ -561,6 +561,17 @@ func Import(ctx context.Context, db *sql.DB, r io.Reader, dryRun bool) (Summary,
 }
 
 func Run(ctx context.Context, db *sql.DB, data Dataset, dry bool) (sum Summary, err error) {
+	return run(ctx, db, data, dry, nil)
+}
+
+// RunWithReceipt applies data and invokes receipt in the same write
+// transaction after all dataset changes and version updates have succeeded.
+// A receipt error rolls back both the dataset changes and the receipt work.
+func RunWithReceipt(ctx context.Context, db *sql.DB, data Dataset, receipt func(*sql.Tx, Summary) error) (Summary, error) {
+	return run(ctx, db, data, false, receipt)
+}
+
+func run(ctx context.Context, db *sql.DB, data Dataset, dry bool, receipt func(*sql.Tx, Summary) error) (sum Summary, err error) {
 	sum = Summary{DryRun: dry, InputCount: data.InputCount, DeduplicatedCount: data.DeduplicatedCount}
 	opts := &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: dry}
 	tx, e := db.BeginTx(ctx, opts)
@@ -778,14 +789,20 @@ func Run(ctx context.Context, db *sql.DB, data Dataset, dry bool) (sum Summary, 
 		}
 		after++
 	}
+	completed := sum
+	completed.Changed = changed
+	a := fmt.Sprint(after)
+	completed.DatasetVersionAfter = &a
+	if receipt != nil {
+		if e = receipt(tx, completed); e != nil {
+			return sum, e
+		}
+	}
 	if e = commitWrite(tx); e != nil {
 		return sum, e
 	}
 	committed = true
-	sum.Changed = changed
-	a := fmt.Sprint(after)
-	sum.DatasetVersionAfter = &a
-	return sum, nil
+	return completed, nil
 }
 
 type committer interface{ Commit() error }

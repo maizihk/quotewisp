@@ -1,0 +1,13 @@
+{{define "imports_list"}}{{template "admin_layout" .}}{{end}}
+{{define "title"}}数据导入{{end}}
+{{define "content"}}
+<div class="page-heading"><div><p class="eyebrow">数据维护</p><h1>导入</h1></div></div>
+<div class="panel"><h2>上传文件</h2><p>文件上限：{{.Data.MaxBytes}} 字节。上传后先预览，确认后才会写入数据。</p><form class="admin-form" method="post" action="/admin/imports" enctype="multipart/form-data">
+<input type="hidden" name="csrf_token" value="{{.Data.CSRF}}">
+<label>格式 <select name="format"><option value="native">原生 JSON</option><option value="hitokoto">Hitokoto JSON</option></select></label>
+<label>文件 <input type="file" name="file" accept=".json,application/json" required></label><button class="button" type="submit">开始检查</button>
+</form></div>
+<div class="table-shell"><table><thead><tr><th>时间</th><th>格式</th><th>状态</th><th>摘要</th></tr></thead><tbody>
+{{range .Data.Jobs}}<tr><td><a href="/admin/imports/{{.ID}}">{{.CreatedAt.Format "2006-01-02 15:04"}}</a></td><td>{{if eq .Format "hitokoto"}}Hitokoto JSON{{else}}原生 JSON{{end}}</td><td>{{.StatusLabel}}</td><td>{{if .HasResult}}{{.Result.InputCount}} 条{{else}}—{{end}}</td></tr>{{else}}<tr><td colspan="4">暂无导入记录</td></tr>{{end}}
+</tbody></table></div>
+{{end}}

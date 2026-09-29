@@ -51,6 +51,12 @@ func (h *handler) allowForPath(path string) string {
 		return "GET, HEAD, POST, OPTIONS"
 	case "/admin/settings":
 		return "GET, HEAD, POST, OPTIONS"
+	case "/admin/imports":
+		return "GET, HEAD, POST, OPTIONS"
+	case "/admin/imports/{id}":
+		return "GET, HEAD, OPTIONS"
+	case "/admin/imports/{id}/confirm", "/admin/imports/{id}/cancel", "/admin/imports/{id}/refresh":
+		return "POST, OPTIONS"
 	case "/admin/":
 		return "GET, HEAD, OPTIONS"
 	case "/admin/submissions":
@@ -175,6 +181,17 @@ func (h *handler) registerGetPublic(mux *http.ServeMux, pattern string, fn http.
 
 func (h *handler) registerPost(mux *http.ServeMux, pattern string, fn http.HandlerFunc) {
 	mux.HandleFunc(pattern, h.protected(fn))
+}
+
+func (h *handler) registerPostUpload(mux *http.ServeMux, pattern string, fn http.HandlerFunc) {
+	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		setNoStore(w)
+		sess, ok := h.loadSession(w, r)
+		if !ok {
+			return
+		}
+		fn(w, r.WithContext(withSession(r.Context(), sess)))
+	})
 }
 
 func (h *handler) registerPostPublic(mux *http.ServeMux, pattern string, fn http.HandlerFunc) {

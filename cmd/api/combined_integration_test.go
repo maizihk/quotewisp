@@ -44,6 +44,10 @@ func TestCombinedHandlerSharesAPIAndWebMetrics(t *testing.T) {
 	}
 	var stopping atomic.Bool
 	c := testCombinedConfig()
+	c.DataDir = t.TempDir()
+	c.ImportMaxUploadBytes = 32 << 20
+	c.ImportUploadTTL = time.Minute
+	c.ImportTimeout = time.Minute
 	web, _, err := buildWebHandler(c, db, ctx, metrics, logger, &bg, &stopping, nil, func(context.Context) admin.APIUsage {
 		v := metrics.APIRequestTotals()
 		return admin.APIUsage{OK: v.OK, Random: v.Random, UUID: v.UUID, Categories: v.Categories}

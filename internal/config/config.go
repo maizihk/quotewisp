@@ -38,6 +38,8 @@ type Config struct {
 	SnapshotPollInterval   time.Duration
 	SnapshotLoadTimeout    time.Duration
 	ImportTimeout          time.Duration
+	ImportMaxUploadBytes   int64
+	ImportUploadTTL        time.Duration
 	ReloadToken            string
 	CORSAllowedOrigins     []string
 	TrustedProxyCIDRs      []netip.Prefix
@@ -98,6 +100,20 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 		}
 	}
 	if mode == ModeWeb || mode == ModeCombined {
+		uploadBytes, e := integer(lookup, "IMPORT_MAX_UPLOAD_BYTES", 32<<20, 1)
+		if e != nil {
+			return c, e
+		}
+		if uploadBytes > 1<<30 {
+			return c, fmt.Errorf("IMPORT_MAX_UPLOAD_BYTES must not exceed 1073741824")
+		}
+		c.ImportMaxUploadBytes = int64(uploadBytes)
+		if c.ImportUploadTTL, err = duration(lookup, "IMPORT_UPLOAD_TTL", 30*time.Minute); err != nil {
+			return c, err
+		}
+		if c.ImportTimeout, err = duration(lookup, "IMPORT_TIMEOUT", 120*time.Second); err != nil {
+			return c, err
+		}
 		defaultAddr := ":8081"
 		if mode == ModeCombined {
 			defaultAddr = ":8080"

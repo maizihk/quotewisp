@@ -45,6 +45,12 @@ func (h *handler) registerRoutes() {
 
 	h.registerGet(mux, "GET /admin/settings", h.getSettings)
 	h.registerPost(mux, "POST /admin/settings", h.postSettings)
+	h.registerGet(mux, "GET /admin/imports", h.getImports)
+	h.registerGet(mux, "GET /admin/imports/{id}", h.getImport)
+	h.registerPostUpload(mux, "POST /admin/imports", h.postImport)
+	h.registerPost(mux, "POST /admin/imports/{id}/confirm", h.postImportConfirm)
+	h.registerPost(mux, "POST /admin/imports/{id}/cancel", h.postImportCancel)
+	h.registerPost(mux, "POST /admin/imports/{id}/refresh", h.postImportRefresh)
 
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
 		setNoStore(w)

@@ -94,7 +94,7 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 	if _, err = db.ExecContext(ctx, "INSERT INTO site_settings (id, site_name, english_name, slogan, contact) VALUES (1, ?, ?, ?, ?)", "Onword\u200b", "Quotewisp", "偶遇一句话", "ops@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if err = database.MigrateDown(testDSN, 1); err != nil {
+	if err = database.MigrateDown(testDSN, int(database.CurrentSchemaVersion)-3); err != nil {
 		t.Fatal(err)
 	}
 	if v, dirty, e := database.SchemaVersion(ctx, db); e != nil || dirty || v != 3 {
@@ -128,7 +128,7 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 	if migratedName != "Onword\u200b" || migratedEnglish.Valid || migratedSlogan.Valid {
 		t.Fatalf("3 to 4 migration changed settings name=%q english=%+v slogan=%+v", migratedName, migratedEnglish, migratedSlogan)
 	}
-	if err = database.MigrateDown(testDSN, 1); err != nil {
+	if err = database.MigrateDown(testDSN, int(database.CurrentSchemaVersion)-3); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.MigrateDown(testDSN, 1); err != nil {

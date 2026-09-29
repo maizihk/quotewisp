@@ -48,6 +48,10 @@ type testEnv struct {
 }
 
 func setupEnv(t *testing.T) *testEnv {
+	return setupEnvWithImports(t, nil)
+}
+
+func setupEnvWithImports(t *testing.T, imports admin.ImportService) *testEnv {
 	t.Helper()
 	sqlDB := testdb.Open(t)
 	st := store.New(sqlDB)
@@ -70,13 +74,15 @@ func setupEnv(t *testing.T) *testEnv {
 	metrics := &testMetrics{}
 	env := &testEnv{store: st, renderer: renderer, metrics: metrics, adminID: adminID}
 	h, err := admin.New(admin.Deps{
-		Store:        st,
-		Renderer:     renderer,
-		Metrics:      metrics,
-		Logins:       auth.NewLoginLimiter(10, 5, 15*time.Minute, 100000),
-		Tokens:       testFormTokens,
-		CookieSecure: false,
-		OnChange:     func() { env.onChange.Add(1) },
+		Store:          st,
+		Renderer:       renderer,
+		Metrics:        metrics,
+		Logins:         auth.NewLoginLimiter(10, 5, 15*time.Minute, 100000),
+		Tokens:         testFormTokens,
+		CookieSecure:   false,
+		OnChange:       func() { env.onChange.Add(1) },
+		Imports:        imports,
+		ImportMaxBytes: 1024,
 	})
 	if err != nil {
 		t.Fatal(err)

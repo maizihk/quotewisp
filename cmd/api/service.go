@@ -207,3 +207,31 @@ func shutdownAll(ctx context.Context, srv httpShutdowner, bg *sync.WaitGroup, cl
 		return shutdownResult{http: ctx.Err()}
 	}
 }
+
+// refreshAndWait shares the regular refresh controller's single-flight and
+// lifecycle accounting, while letting an import report its actual outcome.
+func (c *refreshController) refreshAndWait(ctx context.Context) error {
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		done := make(chan error, 1)
+		if c.start(true, func(_ bool, err error) { done <- err }) {
+			select {
+			case err := <-done:
+				return err
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-c.life.Done():
+			return c.life.Err()
+		case <-tick.C:
+		}
+	}
+}
