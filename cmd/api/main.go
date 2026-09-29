@@ -22,6 +22,7 @@ import (
 	"sentence-api/internal/observability"
 	"sentence-api/internal/snapshot"
 	"sentence-api/internal/web/admin"
+	"sentence-api/internal/web/store"
 )
 
 var version = "dev"
@@ -260,6 +261,9 @@ func setSnapshotMetrics(m *observability.Metrics, s *snapshot.Snapshot) {
 	}
 }
 func safeCategory(err error) string {
+	if errors.Is(err, store.ErrAlreadyInitialized) {
+		return "administrator-already-initialized"
+	}
 	var e *importer.Error
 	if errors.As(err, &e) {
 		return e.Category

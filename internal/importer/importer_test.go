@@ -123,7 +123,8 @@ func TestRunCommitErrorIsOutcomeUnknown(t *testing.T) {
 	mock.ExpectBegin()
 	expectVersion(mock)
 	expectCategory(mock, sqlmock.NewRows([]string{"id", "code", "name", "enabled", "sort_order"}).AddRow(1, "x", "X", true, 0))
-	mock.ExpectQuery("SELECT s\\.uuid.*REPLACE").WithArgs("75a45fd44f2f45eb80cb6f0a7bcdfaf2").WillReturnRows(sqlmock.NewRows([]string{"uuid", "code", "content", "source", "author", "length", "status", "enabled", "published_at"}))
+	mock.ExpectQuery("SELECT s\\.uuid.*s\\.uuid IN").WithArgs("75a45fd4-4f2f-45eb-80cb-6f0a7bcdfaf2").WillReturnRows(sqlmock.NewRows([]string{"uuid", "code", "content", "source", "author", "length", "status", "enabled", "published_at"}))
+	mock.ExpectQuery("SELECT s\\.uuid FROM sentences.*LENGTH").WillReturnRows(sqlmock.NewRows([]string{"uuid"}))
 	mock.ExpectExec("INSERT INTO sentences").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE dataset_versions").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit().WillReturnError(errors.New("connection lost"))
@@ -171,7 +172,7 @@ func TestRunSentenceRowsErrorStopsBeforeWrite(t *testing.T) {
 	expectVersion(mock)
 	expectCategory(mock, sqlmock.NewRows([]string{"id", "code", "name", "enabled", "sort_order"}).AddRow(1, "x", "X", true, 0))
 	rows := sqlmock.NewRows([]string{"uuid", "code", "content", "source", "author", "length", "status", "enabled", "published_at"}).AddRow("75a45fd4-4f2f-45eb-80cb-6f0a7bcdfaf2", "x", "a", nil, nil, 1, 1, true, nil).RowError(0, errors.New("network read"))
-	mock.ExpectQuery("SELECT s\\.uuid.*REPLACE").WithArgs("75a45fd44f2f45eb80cb6f0a7bcdfaf2").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT s\\.uuid.*s\\.uuid IN").WithArgs("75a45fd4-4f2f-45eb-80cb-6f0a7bcdfaf2").WillReturnRows(rows)
 	mock.ExpectRollback()
 	_, e = Run(context.Background(), db, importDataset(), false)
 	var ie *Error

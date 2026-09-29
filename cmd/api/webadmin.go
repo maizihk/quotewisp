@@ -86,10 +86,11 @@ func webAdminCreate(args []string) error {
 		return err
 	}
 	st := store.New(db)
-	id, err := st.CreateAdmin(ctx, normalized, hash, nil)
+	id, err := st.CreateInitialAdmin(ctx, normalized, hash)
 	if err != nil {
-		if errors.Is(err, store.ErrConflict) {
-			return errors.New("username already exists")
+		if errors.Is(err, store.ErrAlreadyInitialized) {
+			fmt.Fprintln(os.Stderr, "administrator already initialized; add users in the admin UI or use reset-password to recover access")
+			return store.ErrAlreadyInitialized
 		}
 		return errors.New("create admin failed")
 	}

@@ -39,6 +39,45 @@ func (s *Store) CreateAdmin(ctx context.Context, username, passwordHash string, 
 	return uint64(id), nil
 }
 
+// CreateInitialAdmin is reserved for deployment-time bootstrap. The existing
+// dataset singleton serializes concurrent bootstrap attempts on both databases;
+// taking this lock does not change the public dataset version.
+func (s *Store) CreateInitialAdmin(ctx context.Context, username, passwordHash string) (uint64, error) {
+	username = strings.ToLower(username)
+	if err := validateAdminUsername(username); err != nil {
+		return 0, err
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, errors.New("begin administrator initialization")
+	}
+	defer tx.Rollback()
+	var version uint64
+	if err = tx.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id=1"+lockSuffix(s.DB)).Scan(&version); err != nil {
+		return 0, errors.New("lock administrator initialization")
+	}
+	var existing uint64
+	err = tx.QueryRowContext(ctx, "SELECT id FROM admin_users LIMIT 1").Scan(&existing)
+	if err == nil {
+		return 0, ErrAlreadyInitialized
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, errors.New("read administrator initialization")
+	}
+	result, err := tx.ExecContext(ctx, "INSERT INTO admin_users (username,password_hash,enabled,created_by) VALUES (?,?,TRUE,NULL)", username, passwordHash)
+	if err != nil {
+		return 0, errors.New("initialize administrator")
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, errors.New("read initialized administrator")
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, errors.New("commit administrator initialization")
+	}
+	return uint64(id), nil
+}
+
 func (s *Store) GetAdminByUsername(ctx context.Context, username string) (AdminUser, error) {
 	return s.getAdmin(ctx, "username = ?", strings.ToLower(username))
 }

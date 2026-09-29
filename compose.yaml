@@ -12,6 +12,8 @@ services:
         format: raw
     ports:
       - "18080:8080"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=${SQLITE_TMPFS_SIZE:-256m},uid=65532,gid=65532,mode=0700
     volumes:
       - quotewisp-data:/var/lib/quotewisp
 

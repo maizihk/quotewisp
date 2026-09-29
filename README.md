@@ -19,7 +19,7 @@ printf '%s\n' "$admin_password" | DATA_DIR=./data ./bin/sentence-api web admin c
 unset admin_password
 ```
 
-访问 `http://localhost:8080`，后台位于 `/admin/`。生产 HTTPS 保持 `COOKIE_SECURE=true`；`false` 仅用于本地 HTTP。管理员没有默认密码，也没有公开安装向导。
+访问 `http://localhost:8080`，后台位于 `/admin/`。生产 HTTPS 保持 `COOKIE_SECURE=true`；`false` 仅用于本地 HTTP。管理员没有默认密码，也没有公开安装向导。`web admin create` 仅在尚无管理员时成功（并发执行也只允许一次）；后续账号通过后台「管理员」页面添加。遗忘密码使用 `web admin reset-password`，停用账号使用 `web admin enable` 恢复。
 
 ## Docker Compose
 
@@ -29,7 +29,7 @@ unset admin_password
 docker compose up -d --build
 ```
 
-默认映射 `18080:8080`，使用命名卷 `quotewisp-data` 保存数据库及密钥，无需 `.env` 或外部网络。需要本地 HTTP 登录时，创建 `.env` 并写入 `COOKIE_SECURE=false` 后重建容器。生产应由 HTTPS 反向代理转发到容器端口。
+默认映射 `18080:8080`，为 SQLite 批量操作提供私有 `/tmp` 内存挂载，使用命名卷 `quotewisp-data` 保存数据库及密钥，无需 `.env` 或外部网络。需要本地 HTTP 登录时，创建 `.env` 并写入 `COOKIE_SECURE=false` 后重建容器。生产应由 HTTPS 反向代理转发到容器端口。
 
 ```bash
 read -rs -p '管理员密码: ' admin_password

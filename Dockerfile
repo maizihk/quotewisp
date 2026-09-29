@@ -11,12 +11,13 @@ RUN test -n "$VERSION" && test -n "$GIT_COMMIT" && test -n "$BUILD_TIME" && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}" \
     -o /out/sentence-api ./cmd/api
-RUN mkdir -p /out/quotewisp-data && chmod 700 /out/quotewisp-data
+RUN mkdir -p /out/quotewisp-data /out/tmp && chmod 700 /out/quotewisp-data /out/tmp
 
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/sentence-api /sentence-api
 COPY --from=build --chown=65532:65532 /out/quotewisp-data /var/lib/quotewisp
+COPY --from=build --chown=65532:65532 /out/tmp /tmp
 COPY migrations/*.sql /migrations/
 USER 65532:65532
 EXPOSE 8080

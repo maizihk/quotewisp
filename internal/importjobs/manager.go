@@ -367,8 +367,11 @@ func safeError(err error) string {
 	var e *importer.Error
 	if errors.As(err, &e) {
 		switch e.Category {
-		case "database", "commit-outcome-unknown":
-			return "数据库处理失败，请查看任务结果后再操作。"
+		case "database":
+			// Importer database errors contain fixed operation labels, never driver text.
+			return "数据库处理失败：" + e.Error()
+		case "commit-outcome-unknown":
+			return "数据库提交结果待核实，请查看任务结果后再操作。"
 		default:
 			s := e.Error()
 			if len(s) > 2048 {

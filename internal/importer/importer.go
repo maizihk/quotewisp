@@ -660,9 +660,52 @@ func run(ctx context.Context, db *sql.DB, data Dataset, dry bool, receipt func(*
 	}
 	existingBy := map[string]existing{}
 	uuids := make([]string, len(data.Sentences))
+	wanted := make(map[string]bool, len(data.Sentences))
 	for i, s := range data.Sentences {
-		uuids[i] = strings.ReplaceAll(s.UUID, "-", "")
+		uuids[i] = s.UUID
+		wanted[s.UUID] = true
 	}
+	const fields = "SELECT s.uuid,c.code,s.content,s.source,s.author,s.length,s.status,c.enabled,s.published_at FROM sentences s JOIN categories c ON c.id=s.category_id WHERE "
+	collect := func(query string, args ...any) error {
+		rows, e := tx.QueryContext(ctx, query, args...)
+		if e != nil {
+			return problem("database", "sentence lookup failed")
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw string
+			var x existing
+			var src, auth sql.NullString
+			if e = rows.Scan(&raw, &x.category, &x.content, &src, &auth, &x.length, &x.status, &x.enabled, &x.published); e != nil {
+				return problem("database", "sentence scan failed")
+			}
+			normalized := strings.ReplaceAll(strings.ToLower(raw), "-", "")
+			if len(normalized) != 32 {
+				continue
+			}
+			key := normalized[:8] + "-" + normalized[8:12] + "-" + normalized[12:16] + "-" + normalized[16:20] + "-" + normalized[20:]
+			if !wanted[key] {
+				continue
+			}
+			if !uuidRE.MatchString(raw) || raw != strings.ToLower(raw) {
+				return problem("conflict", "database UUID for related record is not canonical")
+			}
+			x.source, x.author = src.String, auth.String
+			if _, dup := existingBy[key]; dup {
+				return problem("conflict", "database contains duplicate normalized UUID %q", key)
+			}
+			existingBy[key] = x
+		}
+		if e = rows.Err(); e != nil {
+			return problem("database", "sentence lookup failed")
+		}
+		if e = rows.Close(); e != nil {
+			return problem("database", "sentence lookup failed")
+		}
+		return nil
+	}
+	// Canonical UUID lookups use the existing unique index. Applying LOWER and
+	// REPLACE here would scan the entire table once per 500 input records.
 	for _, chunk := range chunks(uuids, 500) {
 		args := make([]any, len(chunk))
 		marks := make([]string, len(chunk))
@@ -670,42 +713,44 @@ func run(ctx context.Context, db *sql.DB, data Dataset, dry bool, receipt func(*
 			args[i] = v
 			marks[i] = "?"
 		}
-		rows, e := tx.QueryContext(ctx, "SELECT s.uuid,c.code,s.content,s.source,s.author,s.length,s.status,c.enabled,s.published_at FROM sentences s JOIN categories c ON c.id=s.category_id WHERE REPLACE(LOWER(s.uuid),'-','') IN ("+strings.Join(marks, ",")+")", args...)
-		if e != nil {
-			return sum, problem("database", "sentence lookup failed")
+		if e = collect(fields+"s.uuid IN ("+strings.Join(marks, ",")+")", args...); e != nil {
+			return sum, e
 		}
-		for rows.Next() {
-			var raw string
-			var x existing
-			var src, auth sql.NullString
-			if e = rows.Scan(&raw, &x.category, &x.content, &src, &auth, &x.length, &x.status, &x.enabled, &x.published); e != nil {
-				rows.Close()
-				return sum, problem("database", "sentence scan failed")
-			}
-			key := strings.ToLower(raw)
-			lookupKey := key
-			if len(key) == 32 {
-				lookupKey = key[:8] + "-" + key[8:12] + "-" + key[12:16] + "-" + key[16:20] + "-" + key[20:]
-			}
-			if !uuidRE.MatchString(raw) || raw != key {
-				rows.Close()
-				return sum, problem("conflict", "database UUID for related record is not canonical")
-			}
-			x.source = src.String
-			x.author = auth.String
-			if _, dup := existingBy[lookupKey]; dup {
-				rows.Close()
-				return sum, problem("conflict", "database contains duplicate normalized UUID %q", key)
-			}
-			existingBy[lookupKey] = x
-		}
-		if e = rows.Err(); e != nil {
+	}
+	// One additional scan preserves the legacy corruption check: malformed or
+	// uppercase stored UUIDs that normalize to an input UUID must still conflict.
+	// Unrelated damaged rows do not make an otherwise valid import fail.
+	caseMismatch := "BINARY s.uuid <> BINARY LOWER(s.uuid)"
+	if database.IsSQLite(db) {
+		caseMismatch = "s.uuid COLLATE BINARY <> LOWER(s.uuid)"
+	}
+	malformed := "LENGTH(s.uuid) <> 36 OR SUBSTR(s.uuid,9,1) <> '-' OR SUBSTR(s.uuid,14,1) <> '-' OR SUBSTR(s.uuid,19,1) <> '-' OR SUBSTR(s.uuid,24,1) <> '-' OR " + caseMismatch
+	rows, e := tx.QueryContext(ctx, "SELECT s.uuid FROM sentences s JOIN categories c ON c.id=s.category_id WHERE "+malformed)
+	if e != nil {
+		return sum, problem("database", "sentence lookup failed")
+	}
+	for rows.Next() {
+		var raw string
+		if e = rows.Scan(&raw); e != nil {
 			rows.Close()
-			return sum, problem("database", "sentence lookup failed")
+			return sum, problem("database", "sentence scan failed")
 		}
-		if e = rows.Close(); e != nil {
-			return sum, problem("database", "sentence lookup failed")
+		normalized := strings.ReplaceAll(strings.ToLower(raw), "-", "")
+		if len(normalized) != 32 {
+			continue
 		}
+		key := normalized[:8] + "-" + normalized[8:12] + "-" + normalized[12:16] + "-" + normalized[16:20] + "-" + normalized[20:]
+		if wanted[key] {
+			rows.Close()
+			return sum, problem("conflict", "database UUID for related record is not canonical")
+		}
+	}
+	if e = rows.Err(); e != nil {
+		rows.Close()
+		return sum, problem("database", "sentence lookup failed")
+	}
+	if e = rows.Close(); e != nil {
+		return sum, problem("database", "sentence lookup failed")
 	}
 	var additions []Sentence
 	for _, s := range data.Sentences {

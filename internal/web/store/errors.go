@@ -3,14 +3,15 @@ package store
 import "errors"
 
 var (
-	ErrNotFound         = errors.New("not found")
-	ErrConflict         = errors.New("conflict")
-	ErrDuplicate        = errors.New("duplicate")
-	ErrUnchanged        = errors.New("unchanged")
-	ErrCategoryDisabled = errors.New("category disabled")
-	ErrLastAdmin        = errors.New("last admin")
-	ErrQueueFull        = errors.New("queue full")
-	ErrStaleAuth        = errors.New("stale auth")
+	ErrAlreadyInitialized = errors.New("administrator already initialized")
+	ErrNotFound           = errors.New("not found")
+	ErrConflict           = errors.New("conflict")
+	ErrDuplicate          = errors.New("duplicate")
+	ErrUnchanged          = errors.New("unchanged")
+	ErrCategoryDisabled   = errors.New("category disabled")
+	ErrLastAdmin          = errors.New("last admin")
+	ErrQueueFull          = errors.New("queue full")
+	ErrStaleAuth          = errors.New("stale auth")
 )
 
 type ValidationError struct {

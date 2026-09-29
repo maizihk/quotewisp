@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -361,6 +362,159 @@ func TestSQLiteImportAtomicityAndVersion(t *testing.T) {
 		}
 		if after, err := st.DatasetVersion(ctx); err != nil || after != version {
 			t.Fatalf("no-op/conflict changed version: %d %v", after, err)
+		}
+	})
+}
+
+func TestInitialAdminConcurrentOnceContract(t *testing.T) {
+	runContractBackends(t, func(t *testing.T, db *sql.DB, st *store.Store, ctx context.Context, raw string) {
+		var before uint64
+		if err := db.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id=1").Scan(&before); err != nil {
+			t.Fatal(err)
+		}
+		// Separate SQLite handles model separate CLI processes, not a Go mutex.
+		other := st
+		if raw != "" {
+			second, err := database.OpenSQLite(ctx, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer second.Close()
+			other = store.New(second)
+		}
+		start := make(chan struct{})
+		results := make(chan error, 8)
+		for i := 0; i < 8; i++ {
+			go func(i int) {
+				<-start
+				current := st
+				if i%2 == 1 {
+					current = other
+				}
+				_, err := current.CreateInitialAdmin(ctx, fmt.Sprintf("first%d", i), "initialhash")
+				results <- err
+			}(i)
+		}
+		close(start)
+		successes := 0
+		for i := 0; i < 8; i++ {
+			err := <-results
+			if err == nil {
+				successes++
+			} else if !errors.Is(err, store.ErrAlreadyInitialized) {
+				t.Fatalf("unexpected bootstrap error: %v", err)
+			}
+		}
+		if successes != 1 {
+			t.Fatalf("successful initializations=%d", successes)
+		}
+		users, err := st.ListAdmins(ctx)
+		if err != nil || len(users) != 1 {
+			t.Fatalf("admins=%d error=%v", len(users), err)
+		}
+		if users[0].PasswordHash != "initialhash" || !users[0].Enabled || users[0].CreatedBy != nil {
+			t.Fatal("unexpected initial administrator")
+		}
+		// Normal authenticated administration remains available after bootstrap.
+		if _, err = st.CreateAdmin(ctx, "secondadmin", "secondhash", &users[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = st.CreateInitialAdmin(ctx, "thirdadmin", "replacement"); !errors.Is(err, store.ErrAlreadyInitialized) {
+			t.Fatalf("repeat=%v", err)
+		}
+		// Disabled accounts still mean the installation was initialized.
+		if _, err = db.ExecContext(ctx, "UPDATE admin_users SET enabled=FALSE"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = st.CreateInitialAdmin(ctx, "recovery", "replacement"); !errors.Is(err, store.ErrAlreadyInitialized) {
+			t.Fatalf("disabled bypass=%v", err)
+		}
+		var after uint64
+		if err = db.QueryRowContext(ctx, "SELECT version FROM dataset_versions WHERE id=1").Scan(&after); err != nil {
+			t.Fatal(err)
+		}
+		if before != after {
+			t.Fatalf("bootstrap changed dataset version: %d -> %d", before, after)
+		}
+	})
+}
+
+func TestPasswordResetAndConcurrentLoginContract(t *testing.T) {
+	runContractBackends(t, func(t *testing.T, _ *sql.DB, st *store.Store, ctx context.Context, raw string) {
+		other := st
+		if raw != "" {
+			db, err := database.OpenSQLite(ctx, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			other = store.New(db)
+		}
+		id, err := st.CreateInitialAdmin(ctx, "passwordrace", "oldhash")
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC()
+		var token, csrf [32]byte
+		token[0] = 5
+		csrf[0] = 9
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		var loginErr, resetErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			loginErr = st.CreateLoginSession(ctx, store.Session{TokenHash: token, AdminID: id, CSRFToken: csrf, CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour)}, "oldhash")
+		}()
+		go func() { defer wg.Done(); <-start; resetErr = other.ResetAdminPassword(ctx, id, "newhash", nil) }()
+		close(start)
+		wg.Wait()
+		if resetErr != nil || (loginErr != nil && !errors.Is(loginErr, store.ErrStaleAuth)) {
+			t.Fatalf("login=%v reset=%v", loginErr, resetErr)
+		}
+		if _, err = st.GetSession(ctx, token, now); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("old credentials left a valid session: %v", err)
+		}
+		if err = st.ChangeAdminPassword(ctx, id, "oldhash", "stalechange", nil); !errors.Is(err, store.ErrStaleAuth) {
+			t.Fatalf("stale change=%v", err)
+		}
+		admin, err := st.GetAdminByID(ctx, id)
+		if err != nil || admin.PasswordHash != "newhash" {
+			t.Fatalf("reset overwritten: %v", err)
+		}
+	})
+}
+
+func TestImportIndexedLookupPreservesCorruptUUIDConflict(t *testing.T) {
+	runContractBackends(t, func(t *testing.T, db *sql.DB, _ *store.Store, ctx context.Context, _ string) {
+		canonical := "abcdef00-0000-4000-8000-000000000001"
+		source := `{"categories":[{"code":"lookup","name":"查重","sort_order":0}],"sentences":[{"uuid":"` + canonical + `","category":"lookup","content":"查重测试"}]}`
+		if _, err := importer.Import(ctx, db, strings.NewReader(source), false); err != nil {
+			t.Fatal(err)
+		}
+		for _, raw := range []string{strings.ToUpper(canonical), strings.ReplaceAll(canonical, "-", ""), "abcdef0-00000-4000-8000-000000000001"} {
+			if _, err := db.ExecContext(ctx, "UPDATE sentences SET uuid=? WHERE uuid=?", raw, canonical); err != nil {
+				t.Fatal(err)
+			}
+			for _, dry := range []bool{true, false} {
+				_, err := importer.Import(ctx, db, strings.NewReader(source), dry)
+				var detail *importer.Error
+				if !errors.As(err, &detail) || detail.Category != "conflict" {
+					t.Fatalf("raw=%q dry=%v error=%v", raw, dry, err)
+				}
+			}
+			unrelated := strings.ReplaceAll(source, canonical, "abcdef00-0000-4000-8000-000000000002")
+			if _, err := importer.Import(ctx, db, strings.NewReader(unrelated), true); err != nil {
+				t.Fatalf("unrelated corrupt UUID blocks import: %v", err)
+			}
+			if _, err := db.ExecContext(ctx, "UPDATE sentences SET uuid=? WHERE uuid=?", canonical, raw); err != nil {
+				t.Fatal(err)
+			}
+		}
+		sum, err := importer.Import(ctx, db, strings.NewReader(source), false)
+		if err != nil || sum.SkippedCount != 1 || sum.Changed {
+			t.Fatalf("exact duplicate=%+v error=%v", sum, err)
 		}
 	})
 }
