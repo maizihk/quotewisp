@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"sentence-api/internal/database"
 )
 
 const maxTextBytes = 65535
@@ -573,7 +575,7 @@ func Run(ctx context.Context, db *sql.DB, data Dataset, dry bool) (sum Summary, 
 	}()
 	var version uint64
 	q := "SELECT version FROM dataset_versions WHERE id=1"
-	if !dry {
+	if !dry && !database.IsSQLite(db) {
 		q += " FOR UPDATE"
 	}
 	if e = tx.QueryRowContext(ctx, q).Scan(&version); e != nil || version == 0 {
@@ -760,7 +762,13 @@ func Run(ctx context.Context, db *sql.DB, data Dataset, dry bool) (sum Summary, 
 	changed := sum.NewCategories+sum.NewSentences > 0
 	after := version
 	if changed {
-		res, e := tx.ExecContext(ctx, "UPDATE dataset_versions SET version=version+1,published_at=CURRENT_TIMESTAMP(6) WHERE id=1 AND version < 18446744073709551615")
+		stamp := "CURRENT_TIMESTAMP(6)"
+		maxVersion := "18446744073709551615"
+		if database.IsSQLite(db) {
+			stamp = "CURRENT_TIMESTAMP"
+			maxVersion = "9223372036854775807"
+		}
+		res, e := tx.ExecContext(ctx, "UPDATE dataset_versions SET version=version+1,published_at="+stamp+" WHERE id=1 AND version < "+maxVersion)
 		if e != nil {
 			return sum, problem("database", "dataset version update failed")
 		}

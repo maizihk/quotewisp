@@ -132,6 +132,28 @@ jobs:
           test "$web_status" -eq 1
       - name: Web subcommand help
         run: docker run --rm sentence-api:ci web admin --help >/dev/null
+      - name: SQLite first boot and persistence
+        run: |
+          volume="quotewisp-sqlite-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker volume create "$volume" >/dev/null
+          cid=''
+          trap 'if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null 2>&1 || true; fi; docker volume rm "$volume" >/dev/null' EXIT
+          for boot in 1 2; do
+            cid=$(docker run -d -p 127.0.0.1:18082:8080 -v "$volume:/var/lib/quotewisp" sentence-api:ci)
+            for i in $(seq 1 60); do
+              if curl --fail --silent http://127.0.0.1:18082/readyz >/dev/null; then break; fi
+              sleep 1
+            done
+            curl --fail --silent http://127.0.0.1:18082/readyz >/dev/null
+            curl --fail --silent http://127.0.0.1:18082/api/v1 >/dev/null
+            curl --fail --silent http://127.0.0.1:18082/dataset/sentences.json > "$RUNNER_TEMP/sqlite-dataset-$boot.json"
+            docker cp "$cid:/var/lib/quotewisp/web-secret.key" "$RUNNER_TEMP/sqlite-key-$boot" >/dev/null
+            docker stop "$cid" >/dev/null
+            docker rm "$cid" >/dev/null
+            cid=''
+          done
+          cmp "$RUNNER_TEMP/sqlite-dataset-1.json" "$RUNNER_TEMP/sqlite-dataset-2.json"
+          cmp "$RUNNER_TEMP/sqlite-key-1" "$RUNNER_TEMP/sqlite-key-2"
       - name: Web container smoke
         env:
           DB_HOST: 127.0.0.1

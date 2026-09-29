@@ -211,8 +211,8 @@ func TestMariaDBMigrationImportAndSnapshot(t *testing.T) {
 	if _, err = db.ExecContext(ctx, "UPDATE dataset_versions SET version=version+1 WHERE id=1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = database.LoadSnapshot(ctx, db); err == nil {
-		t.Fatal("expected empty snapshot validation after disabling populated category")
+	if empty, loadErr := database.LoadSnapshot(ctx, db); loadErr != nil || empty.SentenceCount != 0 {
+		t.Fatalf("disabled category must produce valid empty snapshot: %v", loadErr)
 	}
 	if _, err = db.ExecContext(ctx, "UPDATE categories SET enabled=TRUE WHERE code='original'"); err != nil {
 		t.Fatal(err)

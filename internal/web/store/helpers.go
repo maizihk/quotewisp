@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"net/netip"
+	"sentence-api/internal/database"
 	"strings"
 )
+
+func lockSuffix(db *sql.DB) string { return database.ForUpdate(db) }
 
 func nullString(s string) any {
 	if s == "" {

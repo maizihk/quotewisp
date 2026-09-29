@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	migratemysql "github.com/golang-migrate/migrate/v4/database/mysql"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	sqlitedriver "modernc.org/sqlite"
 
 	"sentence-api/internal/snapshot"
 	"sentence-api/migrations"
@@ -116,7 +118,33 @@ func NormalizeDSN(raw string, multiStatements bool) (string, error) {
 	}
 	return c.FormatDSN(), nil
 }
+func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
+	if path == "" {
+		return nil, errors.New("open sqlite database")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, errors.New("create database directory")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, errors.New("resolve database path")
+	}
+	uri := url.URL{Scheme: "file", Path: absolute}
+	db, err := sql.Open("sqlite", uri.String()+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_txlock=immediate&_time_format=sqlite")
+	if err != nil {
+		return nil, errors.New("open sqlite database")
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err = db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, errors.New("ping database")
+	}
+	return db, nil
+}
+
 func Open(ctx context.Context, raw string, p PoolConfig) (*sql.DB, error) {
+
 	c, e := normalizedConfig(raw, false)
 	if e != nil {
 		return nil, e
@@ -134,6 +162,23 @@ func Open(ctx context.Context, raw string, p PoolConfig) (*sql.DB, error) {
 		return nil, errors.New("ping database")
 	}
 	return db, nil
+}
+
+// IsSQLite reports whether db is backed by the embedded SQLite driver. It is
+// used by write paths to omit MySQL-only row-lock syntax.
+func IsSQLite(db *sql.DB) bool {
+	if db == nil {
+		return false
+	}
+	_, ok := db.Driver().(*sqlitedriver.Driver)
+	return ok
+}
+
+func ForUpdate(db *sql.DB) string {
+	if IsSQLite(db) {
+		return ""
+	}
+	return " FOR UPDATE"
 }
 
 type Queryer interface {
@@ -201,7 +246,11 @@ func LoadSnapshot(ctx context.Context, db *sql.DB) (*snapshot.Snapshot, error) {
 		return nil, e
 	}
 	b := snapshot.NewBuilder(v, time.Time{})
-	rows, e := tx.QueryContext(ctx, "SELECT code, name, sort_order FROM categories WHERE enabled = TRUE ORDER BY sort_order ASC, BINARY code ASC")
+	categoryOrder := "BINARY code ASC"
+	if IsSQLite(db) {
+		categoryOrder = "code COLLATE BINARY ASC"
+	}
+	rows, e := tx.QueryContext(ctx, "SELECT code, name, sort_order FROM categories WHERE enabled = TRUE ORDER BY sort_order ASC, "+categoryOrder)
 	if e != nil {
 		return nil, errors.New("read categories")
 	}
@@ -317,4 +366,127 @@ func migrateRun(raw string, steps int, up bool) error {
 		return errors.New("migration failed")
 	}
 	return nil
+}
+
+// migrateSQLite deliberately uses a small native migrator instead of the
+// cgo-only sqlite3 migrate driver. Each version is committed independently and
+// the state row is updated in the same transaction, so concurrent starters are
+// serialized by SQLite's write lock.
+func migrateSQLite(raw string, steps int, up bool) error {
+	ctx := context.Background()
+	db, err := OpenSQLite(ctx, raw)
+	if err != nil {
+		return errors.New("migration open failed")
+	}
+	defer db.Close()
+	if _, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1), version INTEGER NOT NULL, dirty BOOLEAN NOT NULL DEFAULT 0)`); err != nil {
+		return errors.New("migration state failed")
+	}
+	var v uint
+	var dirty bool
+	err = db.QueryRowContext(ctx, "SELECT version, dirty FROM schema_migrations LIMIT 1").Scan(&v, &dirty)
+	if errors.Is(err, sql.ErrNoRows) {
+		v = 0
+	} else if err != nil {
+		return errors.New("migration state failed")
+	}
+	if dirty {
+		return errors.New("migration state is dirty")
+	}
+	if v > CurrentSchemaVersion {
+		return errors.New("unknown migration version")
+	}
+	if !up {
+		if steps <= 0 {
+			return errors.New("down steps must be positive")
+		}
+		for i := 0; i < steps && v > 0; i++ {
+			if err = sqliteMigration(db, v, false); err != nil {
+				return errors.New("migration failed")
+			}
+			v--
+		}
+		return nil
+	}
+	for v < CurrentSchemaVersion {
+		next := v + 1
+		if err = sqliteMigration(db, next, true); err != nil {
+			return errors.New("migration failed")
+		}
+		v = next
+	}
+	return nil
+}
+
+func sqliteMigration(db *sql.DB, version uint, up bool) error {
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var current uint
+	var dirty bool
+	if err = tx.QueryRow("SELECT version, dirty FROM schema_migrations LIMIT 1").Scan(&current, &dirty); errors.Is(err, sql.ErrNoRows) {
+		current = 0
+	} else if err != nil {
+		return err
+	}
+	if dirty {
+		return errors.New("migration state is dirty")
+	}
+	if current > CurrentSchemaVersion {
+		return errors.New("unknown migration version")
+	}
+	if up && current >= version {
+		return tx.Commit()
+	}
+	if !up && current != version {
+		return errors.New("migration state changed concurrently")
+	}
+	if _, err = tx.Exec("DELETE FROM schema_migrations"); err != nil {
+		return err
+	}
+	var stmts []string
+	if up {
+		switch version {
+		case 1:
+			stmts = []string{
+				`CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL COLLATE BINARY UNIQUE, name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+				`CREATE TABLE sentences (id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT NOT NULL COLLATE BINARY UNIQUE, category_id INTEGER NOT NULL, content TEXT NOT NULL, source TEXT, author TEXT, length INTEGER NOT NULL, status INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, published_at DATETIME, FOREIGN KEY(category_id) REFERENCES categories(id))`,
+				`CREATE INDEX idx_categories_enabled_sort ON categories(enabled,sort_order)`, `CREATE INDEX idx_sentences_publish_query ON sentences(status,category_id,length,id)`,
+				`CREATE TABLE dataset_versions (id INTEGER PRIMARY KEY, version INTEGER NOT NULL DEFAULT 1, published_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`, `INSERT INTO dataset_versions(id,version) VALUES(1,1)`,
+			}
+		case 2:
+			stmts = []string{`CREATE TABLE admin_users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL COLLATE BINARY UNIQUE, password_hash BLOB NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1, created_by INTEGER, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, last_login_at DATETIME)`, `CREATE TABLE submissions (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, category_id INTEGER NOT NULL, source TEXT, author TEXT, nickname TEXT, contact TEXT, client_ip BLOB, content_sha256 BLOB NOT NULL, status INTEGER NOT NULL DEFAULT 0, reject_reason TEXT, reviewed_by INTEGER, reviewed_at DATETIME, sentence_id INTEGER UNIQUE, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(category_id) REFERENCES categories(id), FOREIGN KEY(reviewed_by) REFERENCES admin_users(id), FOREIGN KEY(sentence_id) REFERENCES sentences(id))`, `CREATE TABLE admin_sessions (token_hash BLOB PRIMARY KEY, admin_id INTEGER NOT NULL, csrf_token BLOB NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen_at DATETIME NOT NULL, expires_at DATETIME NOT NULL, FOREIGN KEY(admin_id) REFERENCES admin_users(id))`, `CREATE INDEX idx_submissions_status_created ON submissions(status,created_at)`, `CREATE INDEX idx_submissions_pending_hash ON submissions(status,content_sha256)`, `CREATE INDEX idx_submissions_reviewed ON submissions(status,reviewed_at)`, `CREATE INDEX idx_admin_sessions_admin ON admin_sessions(admin_id)`, `CREATE INDEX idx_admin_sessions_expires ON admin_sessions(expires_at)`}
+		case 3:
+			stmts = []string{`CREATE TABLE site_settings (id INTEGER PRIMARY KEY, site_name TEXT NOT NULL, contact TEXT NOT NULL, public_origin TEXT, repo_url TEXT, beian_text TEXT, beian_url TEXT, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`}
+		case 4:
+			stmts = []string{`ALTER TABLE site_settings ADD COLUMN english_name TEXT`, `ALTER TABLE site_settings ADD COLUMN slogan TEXT`}
+		}
+	} else {
+		switch version {
+		case 4:
+			stmts = []string{`ALTER TABLE site_settings DROP COLUMN slogan`, `ALTER TABLE site_settings DROP COLUMN english_name`}
+		case 3:
+			stmts = []string{`DROP TABLE site_settings`}
+		case 2:
+			stmts = []string{`DROP TABLE admin_sessions`, `DROP TABLE submissions`, `DROP TABLE admin_users`}
+		case 1:
+			stmts = []string{`DROP TABLE sentences`, `DROP TABLE categories`, `DROP TABLE dataset_versions`}
+		}
+	}
+	for _, s := range stmts {
+		if _, err = tx.Exec(s); err != nil {
+			return err
+		}
+	}
+	if up {
+		_, err = tx.Exec("INSERT INTO schema_migrations(version,dirty) VALUES(?,0)", version)
+	} else {
+		_, err = tx.Exec("INSERT INTO schema_migrations(version,dirty) VALUES(?,0)", version-1)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }

@@ -1,21 +1,41 @@
 # 运行与回滚
 
-默认 `.env` 需要四个数据库变量：`DB_HOST`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`；`DB_PORT` 默认 `3306`，`DB_TLS` 可选。旧 `MYSQL_DSN` 仍兼容，但不可与 `DB_*` 混用；新部署应把原来的 DSN 拆成这四项。`DATA_DIR` 默认 `/var/lib/quotewisp`，Compose 中对应挂载目录 `./data`。密钥首次启动自动保存到该目录；目录初始化见 README 的 Compose 部署步骤。联系方式可在后台设置。
+默认不设置数据库变量，使用 `DATA_DIR/quotewisp.db`（SQLite WAL）。`DATA_DIR` 默认 `/var/lib/quotewisp`，同时保存 `web-secret.key`。仓库 Compose 使用命名卷，镜像中的目录归 UID/GID `65532:65532` 所有，空命名卷首次挂载后可直接写入。绑定宿主机目录时需手动创建并授予相同 UID/GID，权限设为 `700`。
 
-首次部署按“迁移、导入、启动服务”执行。生产形态是一个 `quotewisp` 容器监听 `:8080`，同一进程提供 API、前台和管理后台；不要把 DSN、令牌或导入数据写入镜像。统一运行账号沿用 `sa_test_write`，审核后仅补目标库所需 DDL 权限，使同一组数据库变量可用于迁移、导入和运行。旧 read/migrate 账号在新部署验收和回滚兼容性确认前保留。
+## 首次运行与升级
 
-从旧环境升级时，先备份 `.env` 和 Compose 文件。使用旧 `WEB_SECRET_KEY`、旧数据库 DSN（或等价的四项 `DB_*`）和新的 `./data` 挂载启动一次，让服务把相同密钥保存到 `data/web-secret.key`；确认启动成功后，移除 `.env` 中的 `WEB_SECRET_KEY`，再按新的四项数据库变量配置并重建容器。密钥文件损坏或显式密钥与已保存密钥冲突时，启动必须失败，不能静默覆盖或重新生成。
+从源码运行 `docker compose up -d --build`，或使用本次改动发布后的明确镜像版本。旧 `1.0.0-rc.*` 镜像不包含 SQLite 支持。应用首次启动自动迁移并写入少量自编示例；管理员用 `web admin create --password-stdin` 在部署终端创建，不提供默认密码或公开安装页。服务不依赖预先导入句库，删除全部语句后也不会重新生成示例。
 
-镜像使用不可变版本或 digest。发布前注入程序版本、完整提交哈希和 UTC 构建时间；缺少真实 Git 元数据的本地构建只能作为开发验证，不能发布。容器监听 8080，可使用只读根文件系统。Nginx 应覆盖或正确追加 `X-Forwarded-For`，`TRUSTED_PROXY_CIDRS` 只配置实际受控代理网段。
+已有 MySQL/MariaDB 部署保留 `DB_HOST`、`DB_NAME`、`DB_USER`、`DB_PASSWORD` 或旧 `MYSQL_DSN`；二者不得混用，部分配置也会拒绝。外部数据库仍由部署方创建，应用账号需要目标库迁移所需 DDL 权限。启动自动迁移表；已有库升级不注入示例。程序不会自动把外部数据库转换为 SQLite。
 
-上线检查顺序：确认迁移状态为版本 1、2、3 或 4 且非 dirty。当前单进程支持 API 与 Web，执行 `migrate up` 后导入数据，再启动 `quotewisp`（默认 `:8080`）。仅早期旧读 API 只接受 schema 1–3；当前 RC1 支持 schema 4，RC1 应用回滚无需执行 `migrate down`。执行 import dry-run；执行正式导入；检查 `/healthz`、`/readyz`、`/version`、分类和随机查询；观察刷新、数据库和请求指标；最后由外部代理逐步切流。指标和 `/internal/reload` 应限制在受信任网络。OpenResty 将 `/api/` 和其余路径都转到单容器 `:8080`。后台概况的接口调用次数使用同一进程内统计，不再配置 `API_METRICS_URL`，重启后从 0 累加。
+升级前备份数据库、密钥、`.env` 和 Compose。已有绑定目录部署应继续使用原目录，不能因仓库 Compose 默认改为命名卷就丢弃原密钥。需要外部 `1panel-network` 的既有反向代理部署，应在自己的 Compose 中保留网络配置。迁移旧显式 `WEB_SECRET_KEY` 时，首次保持原值，让程序保存到原数据目录；确认成功后才移除环境变量。冲突或损坏的密钥不能静默重建。
 
-应用回滚通过代理切回前一个已验证镜像 digest。RC2 回滚时必须同时还原旧 `.env` 和旧镜像；需要回到只支持 schema 3 的旧 web 时，先完成备份并停止依赖品牌新字段的 web，再显式执行 `migrate down --steps 1`；000004 回滚会删除英文名称和标语两列，但保留 `site_name` 及其他站点设置。数据库迁移回滚与应用切流是独立操作。数据回滚应通过遵循版本锁协议的补偿写入或数据库恢复完成；恢复后需递增版本、手动 reload 或重启，避免相同版本号掩盖内容变化。
+显式 `migrate up` 可在启动前执行。数据库版本高于程序支持范围、迁移失败或配置错误时应停止升级，查看安全错误阶段与分类；不要尝试通过移除 DB 配置绕过错误。不要把 DSN、令牌或数据写入镜像。
 
-收到 SIGTERM/SIGINT 后 readiness 会失败，后台轮询和刷新被取消，HTTP 请求在同一个 `SHUTDOWN_TIMEOUT` 内排空。超时会强制关闭连接并以失败退出。
+## SQLite 备份与恢复
 
-当前部署目录为 `/home/andan/deploy/quotewisp`，其中放置 `compose.yaml` 与 `.env`；目录权限为 `700`，`.env` 权限为 `600`。`.env` 的值不加包裹引号，密码中的 `$` 按 literal 保留。Compose 使用 `env_file` 的 `format: raw`，要求 Compose `>=2.30`。当前镜像为 rc2，默认绑定 IP 为 `172.16.99.100`、主机端口为 `18080`、网络为外部 `1panel-network`。新机器需修改 IP、DSN 和网络，并先确保外部网络已存在。
+SQLite WAL 依赖本地磁盘，不把数据库放到网络文件系统。备份可使用 SQLite 一致性备份工具；最简单的做法是停止所有使用该数据库的应用与 CLI，再复制整个 `DATA_DIR`。复制时保留数据库、可能存在的 `-wal`/`-shm` 文件和密钥。运行中单独复制 `quotewisp.db` 不能保证包含所有已提交数据。
 
-Compose 迁移已完成。在该目录执行 `docker compose config -q` 可校验配置；修改 `.env` 后执行 `docker compose up -d --force-recreate`，不要只执行 `docker restart`。当前只运行一个 app 服务，不创建数据库或 Nginx。活动环境文件为 `/home/andan/deploy/quotewisp/.env`；旧 `app.env` 仅作为历史/旧回滚配置。迁移状态和一次性回滚容器信息位于 `/home/andan/deploy/quotewisp/migration-state.json`；旧 `quotewisp-rollback-086f29f26c23442dafdfac788d398564` 已停止且 `restart=no`。
+命名卷备份示例（使用本次本地构建镜像）：
 
-本机 MariaDB 11.8.9 验收可运行 `scripts/test-mariadb.sh`。脚本默认连接本机 `127.0.0.1:3306` 的 `MariaDB` 容器，只在子进程内读取已有 root 密码，不输出或保存凭证；它创建加密随机命名的专用数据库并清理。无参数时运行详细集成测试；传入参数时原样交给 `go test`，例如 `scripts/test-mariadb.sh -race ./...`。可用 `MARIADB_TEST_CONTAINER`、`GO_CMD` 和 `GOTMPDIR` 覆盖本机默认值；自定义临时目录路径应保持较短，以免 Unix socket 测试超过系统路径上限。
+```bash
+docker compose stop quotewisp
+mkdir -p backup
+chmod 700 backup
+docker compose cp quotewisp:/var/lib/quotewisp/. ./backup/
+docker compose start quotewisp
+```
+
+为每次备份使用新的私有目录，并检查命令返回值。恢复时停止服务，保留当前目录用于回退，然后恢复整套备份并还原 UID/GID `65532:65532` 和目录 `700` 权限。启动后检查管理员登录、站点设置、数据集版本与随机查询。不得使用 `docker compose down -v` 保留数据，`-v` 会删除命名卷。
+
+## 验收与回滚
+
+上线检查 `/healthz`、`/readyz`、`/version`、分类、随机语句、投稿、管理员登录与审核。空库有效时 `/readyz` 仍为 200，随机查询返回 404。确认重建容器后数据、账号和密钥保留。`/metrics` 和 `/internal/reload` 应限制在受信任网络；代理应正确覆盖或追加 `X-Forwarded-For`，仅把实际受控代理网段写入 `TRUSTED_PROXY_CIDRS`。
+
+生产 HTTPS 保持安全 Cookie；仅本地 HTTP 使用 `COOKIE_SECURE=false`。修改 `.env` 后重建容器使环境变量生效，不能只执行 `docker restart`。Compose 的 raw 环境文件要求 Compose >= 2.30，值不要添加包裹引号。
+
+回滚先确认旧镜像支持目标数据库及 schema。旧 MySQL-only 镜像不能读取 SQLite，SQLite 也不会自动降级；需要回退时停止应用，恢复升级前备份并使用与该备份匹配的镜像。MySQL 迁移回滚仍是独立显式操作，必须先备份并确认字段删除影响，不能把切回旧镜像视为数据库已回滚。
+
+收到 SIGTERM/SIGINT 后 readiness 失败，后台任务取消，HTTP 请求在 `SHUTDOWN_TIMEOUT` 内排空。超时会强制关闭连接并以失败退出。后台 API 调用统计属于进程内计数，重启后从零开始。
+
+SQLite 测试默认执行；MariaDB 兼容测试可设置 `MYSQL_TEST_DSN`，或运行 `scripts/test-mariadb.sh` 使用本机现有 MariaDB 容器的隔离测试库。测试脚本不打印凭据，会清理测试数据库。`docs/deployment-*.md`、`single-container-deployment.md` 中的生产机器、镜像和回滚记录属于历史资料，本轮源码变更没有对生产执行升级。

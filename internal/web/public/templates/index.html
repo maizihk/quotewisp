@@ -5,7 +5,7 @@
 <section class="reading" aria-labelledby="random-content">
 {{if .Site.Slogan}}<p class="reading-kicker">{{.Site.Slogan}}</p>{{end}}
 <blockquote class="reading-quote" id="random">
-<p id="random-content" data-length="short" tabindex="0" aria-live="polite" aria-atomic="true">正在寻一句话…</p>
+<p id="random-content" data-length="short" tabindex="0" aria-live="polite" aria-atomic="true">{{if .Data.Categories}}正在寻一句话…{{else}}暂时还没有句子。{{end}}</p>
 <footer id="random-meta"></footer>
 </blockquote>
 <div class="reading-controls">

@@ -109,7 +109,7 @@ func (s *Store) SetAdminEnabled(ctx context.Context, id uint64, enabled bool) er
 	}
 	defer tx.Rollback()
 	if !enabled {
-		rows, err := tx.QueryContext(ctx, "SELECT id FROM admin_users WHERE enabled = TRUE ORDER BY id FOR UPDATE")
+		rows, err := tx.QueryContext(ctx, "SELECT id FROM admin_users WHERE enabled = TRUE ORDER BY id"+lockSuffix(s.DB))
 		if err != nil {
 			return errors.New("lock enabled admins")
 		}
@@ -152,7 +152,7 @@ func (s *Store) SetAdminEnabled(ctx context.Context, id uint64, enabled bool) er
 		}
 	} else {
 		var curEnabled bool
-		if err = tx.QueryRowContext(ctx, "SELECT enabled FROM admin_users WHERE id = ? FOR UPDATE", id).Scan(&curEnabled); errors.Is(err, sql.ErrNoRows) {
+		if err = tx.QueryRowContext(ctx, "SELECT enabled FROM admin_users WHERE id = ?"+lockSuffix(s.DB), id).Scan(&curEnabled); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return errors.New("read admin")
@@ -188,7 +188,7 @@ func (s *Store) resetAdminPassword(ctx context.Context, id uint64, hash string, 
 	}
 	defer tx.Rollback()
 	var currentHash string
-	if err = tx.QueryRowContext(ctx, "SELECT password_hash FROM admin_users WHERE id = ? FOR UPDATE", id).Scan(&currentHash); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, "SELECT password_hash FROM admin_users WHERE id = ?"+lockSuffix(s.DB), id).Scan(&currentHash); errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return errors.New("lock admin")
@@ -236,6 +236,10 @@ func (s *Store) TouchAdminLogin(ctx context.Context, id uint64) error {
 func isDuplicateKey(err error) bool {
 	if err == nil {
 		return false
+	}
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) && (coded.Code() == 1555 || coded.Code() == 2067) {
+		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "Duplicate entry") || strings.Contains(msg, "duplicate key")

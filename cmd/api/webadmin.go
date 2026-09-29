@@ -74,7 +74,10 @@ func webAdminCreate(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	db, err := database.Open(ctx, c.MYSQLDSN, pool(c))
+	if err = target(c).Initialize(ctx, pool(c)); err != nil {
+		return err
+	}
+	db, err := target(c).Open(ctx, pool(c))
 	if err != nil {
 		return err
 	}
@@ -106,7 +109,7 @@ func webAdminList(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	db, err := database.Open(ctx, c.MYSQLDSN, pool(c))
+	db, err := target(c).Open(ctx, pool(c))
 	if err != nil {
 		return err
 	}
@@ -160,7 +163,7 @@ func webAdminResetPassword(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	db, err := database.Open(ctx, c.MYSQLDSN, pool(c))
+	db, err := target(c).Open(ctx, pool(c))
 	if err != nil {
 		return err
 	}
@@ -203,7 +206,7 @@ func webAdminSetEnabled(args []string, enabled bool) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	db, err := database.Open(ctx, c.MYSQLDSN, pool(c))
+	db, err := target(c).Open(ctx, pool(c))
 	if err != nil {
 		return err
 	}

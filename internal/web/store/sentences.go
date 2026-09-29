@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sentence-api/internal/database"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,7 +56,11 @@ func (s *Store) ListSentences(ctx context.Context, f SentenceFilter) ([]Sentence
 		args = append(args, f.Status)
 	}
 	if f.Query != "" {
-		where += " AND s.content LIKE ? ESCAPE '\\\\'"
+		escape := " ESCAPE '\\\\'"
+		if database.IsSQLite(s.DB) {
+			escape = " ESCAPE '\\'"
+		}
+		where += " AND s.content LIKE ?" + escape
 		args = append(args, "%"+escapeLike(f.Query)+"%")
 	}
 	if f.UUID != "" {
@@ -122,7 +127,7 @@ func (s *Store) CreateSentence(ctx context.Context, f SentenceFields) (string, e
 		if !cat.enabled {
 			return false, ErrCategoryDisabled
 		}
-		if err = exactDuplicateSentence(ctx, tx, cat.id, f.Content, 0); err != nil {
+		if err = s.exactDuplicateSentence(ctx, tx, cat.id, f.Content, 0); err != nil {
 			return false, err
 		}
 		u := uuid.New()
@@ -157,7 +162,7 @@ func (s *Store) UpdateSentence(ctx context.Context, uuid string, f SentenceField
 			code       string
 		}
 		err := tx.QueryRowContext(ctx, `SELECT s.id, s.content, s.source, s.author, s.category_id, c.code
-			FROM sentences s JOIN categories c ON c.id = s.category_id WHERE s.uuid = ? FOR UPDATE`, uuid).
+		FROM sentences s JOIN categories c ON c.id = s.category_id WHERE s.uuid = ?`+lockSuffix(s.DB), uuid).
 			Scan(&cur.id, &cur.content, &cur.source, &cur.author, &cur.categoryID, &cur.code)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrNotFound
@@ -181,7 +186,7 @@ func (s *Store) UpdateSentence(ctx context.Context, uuid string, f SentenceField
 			return false, ErrUnchanged
 		}
 		if cur.content != f.Content || cur.categoryID != cat.id {
-			if err = exactDuplicateSentence(ctx, tx, cat.id, f.Content, cur.id); err != nil {
+			if err = s.exactDuplicateSentence(ctx, tx, cat.id, f.Content, cur.id); err != nil {
 				return false, err
 			}
 		}
@@ -200,7 +205,7 @@ func (s *Store) SetSentenceStatus(ctx context.Context, uuid string, from, to uin
 	}
 	return s.withVersionTx(ctx, func(tx *sql.Tx) (bool, error) {
 		var status uint8
-		err := tx.QueryRowContext(ctx, "SELECT status FROM sentences WHERE uuid = ? FOR UPDATE", uuid).Scan(&status)
+		err := tx.QueryRowContext(ctx, "SELECT status FROM sentences WHERE uuid = ?"+lockSuffix(s.DB), uuid).Scan(&status)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrNotFound
 		}

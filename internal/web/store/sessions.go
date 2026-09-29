@@ -41,7 +41,7 @@ func (s *Store) CreateLoginSession(ctx context.Context, sess Session, passwordHa
 
 	var currentHash string
 	var enabled bool
-	err = tx.QueryRowContext(ctx, "SELECT password_hash, enabled FROM admin_users WHERE id = ? FOR UPDATE", sess.AdminID).
+	err = tx.QueryRowContext(ctx, "SELECT password_hash, enabled FROM admin_users WHERE id = ?"+lockSuffix(s.DB), sess.AdminID).
 		Scan(&currentHash, &enabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound

@@ -39,7 +39,12 @@ func main() {
 			logger.Error("command_failed", "category", "usage")
 			os.Exit(2)
 		}
-		logger.Error("command_failed", "category", safeCategory(err))
+		var startup *database.StartupError
+		if errors.As(err, &startup) {
+			logger.Error("command_failed", "stage", startup.Stage, "category", startup.Category)
+		} else {
+			logger.Error("command_failed", "category", safeCategory(err))
+		}
 		os.Exit(1)
 	}
 }
@@ -58,6 +63,10 @@ func run(args []string) error {
 		}
 	}
 	return runService()
+}
+
+func target(c config.Config) database.Target {
+	return database.Target{MySQLDSN: c.MYSQLDSN, SQLitePath: c.SQLitePath}
 }
 
 func pool(c config.Config) database.PoolConfig {
@@ -93,7 +102,7 @@ func runImport(args []string) error {
 	if closeErr != nil {
 		return errors.New("close import file")
 	}
-	db, err := database.Open(ctx, c.MYSQLDSN, pool(c))
+	db, err := target(c).Open(ctx, pool(c))
 	if err != nil {
 		return err
 	}
@@ -126,7 +135,7 @@ func runMigrate(args []string) error {
 		if len(args) != 1 {
 			return errors.New("migrate up accepts no arguments")
 		}
-		return database.MigrateUp(c.MYSQLDSN)
+		return target(c).MigrateUp()
 	case "down":
 		fs := flag.NewFlagSet("migrate down", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
@@ -134,7 +143,7 @@ func runMigrate(args []string) error {
 		if err = fs.Parse(args[1:]); err != nil || fs.NArg() != 0 || *steps <= 0 {
 			return errors.New("migrate down requires positive --steps")
 		}
-		return database.MigrateDown(c.MYSQLDSN, *steps)
+		return target(c).MigrateDown(*steps)
 	default:
 		return errors.New("migrate requires up or down")
 	}
@@ -157,7 +166,11 @@ func runService() error {
 	life, stopLife := context.WithCancel(context.Background())
 	defer stopLife()
 	startCtx, cancel := context.WithTimeout(life, c.SnapshotLoadTimeout)
-	db, err := database.Open(startCtx, c.MYSQLDSN, pool(c))
+	if err = target(c).Initialize(startCtx, pool(c)); err != nil {
+		cancel()
+		return err
+	}
+	db, err := target(c).Open(startCtx, pool(c))
 	if err == nil {
 		err = database.CheckReadSchema(startCtx, db)
 	}

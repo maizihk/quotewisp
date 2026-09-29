@@ -61,19 +61,23 @@ func (s *Store) BuildPublicData(ctx context.Context) (*PublicData, error) {
 		return nil, err
 	}
 
-	out := &PublicData{Version: version, BuiltAt: time.Now().UTC()}
+	out := &PublicData{Version: version, BuiltAt: time.Now().UTC(), Categories: []PublicCategory{}, Recent: []RecentItem{}}
 
+	categoryOrder := "BINARY c.code ASC"
+	if database.IsSQLite(s.DB) {
+		categoryOrder = "c.code COLLATE BINARY ASC"
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT c.code, c.name, c.sort_order,
 		COALESCE(SUM(CASE WHEN s.status = 1 THEN 1 ELSE 0 END), 0)
 		FROM categories c
 		LEFT JOIN sentences s ON s.category_id = c.id AND s.status = 1
 		WHERE c.enabled = TRUE
 		GROUP BY c.id, c.code, c.name, c.sort_order
-		ORDER BY c.sort_order ASC, BINARY c.code ASC`)
+		ORDER BY c.sort_order ASC, `+categoryOrder)
 	if err != nil {
 		return nil, errors.New("read public categories")
 	}
-	var exportCats []exportCategory
+	exportCats := make([]exportCategory, 0)
 	for rows.Next() {
 		var pc PublicCategory
 		var sortOrder int32
@@ -123,7 +127,7 @@ func (s *Store) BuildPublicData(ctx context.Context) (*PublicData, error) {
 	if err != nil {
 		return nil, errors.New("read export sentences")
 	}
-	var exportSentences []exportSentence
+	exportSentences := make([]exportSentence, 0)
 	for sentenceRows.Next() {
 		var es exportSentence
 		var source, author sql.NullString

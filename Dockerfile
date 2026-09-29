@@ -11,7 +11,7 @@ RUN test -n "$VERSION" && test -n "$GIT_COMMIT" && test -n "$BUILD_TIME" && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT} -X main.buildTime=${BUILD_TIME}" \
     -o /out/sentence-api ./cmd/api
-RUN mkdir -p /out/quotewisp-data
+RUN mkdir -p /out/quotewisp-data && chmod 700 /out/quotewisp-data
 
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

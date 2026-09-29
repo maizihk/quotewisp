@@ -105,9 +105,6 @@ func (b *Builder) Build(ctx context.Context) (*Snapshot, error) {
 	if b.s.Version == 0 {
 		return nil, fmt.Errorf("dataset version must be positive")
 	}
-	if len(b.s.Categories) == 0 || b.s.SentenceCount == 0 {
-		return nil, fmt.Errorf("snapshot must contain a category and sentence")
-	}
 	if e := ctx.Err(); e != nil {
 		return nil, e
 	}
@@ -289,7 +286,7 @@ func (m *Manager) refreshHeld(ctx context.Context, force bool) (bool, error) {
 	if next == nil {
 		return false, errors.New("loader returned nil snapshot")
 	}
-	if next.Version == 0 || next.SentenceCount == 0 || len(next.Categories) == 0 {
+	if next.Version == 0 {
 		return false, errors.New("loader returned invalid snapshot")
 	}
 	if e = ctx.Err(); e != nil {

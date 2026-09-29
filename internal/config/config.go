@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ const (
 type Config struct {
 	HTTPAddr               string
 	MYSQLDSN               string
+	SQLitePath             string
 	DataDir                string
 	MySQLMaxOpenConns      int
 	MySQLMaxIdleConns      int
@@ -59,8 +61,17 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 	c := Config{HTTPAddr: ":8080", MySQLMaxOpenConns: 10, MySQLMaxIdleConns: 5, MySQLConnMaxLifetime: 30 * time.Minute, SnapshotPollInterval: time.Minute, SnapshotLoadTimeout: 30 * time.Second, ImportTimeout: 120 * time.Second, LogLevel: slog.LevelInfo, ShutdownTimeout: 10 * time.Second}
 	var err error
 	c.DataDir = "/var/lib/quotewisp"
+	if v, ok := lookup("DATA_DIR"); ok {
+		if v == "" {
+			return c, fmt.Errorf("DATA_DIR must not be empty")
+		}
+		c.DataDir = v
+	}
 	if c.MYSQLDSN, err = mysqlDSN(lookup); err != nil {
 		return c, err
+	}
+	if c.MYSQLDSN == "" {
+		c.SQLitePath = filepath.Join(c.DataDir, "quotewisp.db")
 	}
 	if mode == ModeService || mode == ModeCombined {
 		if c.HTTPAddr, err = str(lookup, "HTTP_ADDR", c.HTTPAddr, false); err != nil {
@@ -145,9 +156,6 @@ func load(mode Mode, lookup func(string) (string, bool)) (Config, error) {
 		if c.ShutdownTimeout, err = duration(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second); err != nil {
 			return c, err
 		}
-		if c.DataDir, err = str(lookup, "DATA_DIR", c.DataDir, false); err != nil {
-			return c, err
-		}
 	}
 	if mode == ModeService || mode == ModeCombined {
 		if c.SnapshotPollInterval, err = duration(lookup, "SNAPSHOT_POLL_INTERVAL", time.Minute); err != nil {
@@ -205,8 +213,11 @@ func mysqlDSN(l func(string) (string, bool)) (string, error) {
 	}
 	legacy, legacyOK := l("MYSQL_DSN")
 	if present == 0 {
-		if !legacyOK || legacy == "" {
-			return "", fmt.Errorf("DB_HOST, DB_NAME, DB_USER, and DB_PASSWORD are required")
+		if legacyOK && legacy == "" {
+			return "", fmt.Errorf("MYSQL_DSN must not be empty")
+		}
+		if !legacyOK {
+			return "", nil
 		}
 		return legacy, nil
 	}
@@ -261,6 +272,13 @@ func mysqlDSN(l func(string) (string, bool)) (string, error) {
 		mc.TLSConfig = "true"
 	}
 	return mc.FormatDSN(), nil
+}
+
+func defaultDataDir(l func(string) (string, bool)) string {
+	if v, ok := l("DATA_DIR"); ok && v != "" {
+		return v
+	}
+	return "/var/lib/quotewisp"
 }
 func optional(l func(string) (string, bool), k string) (string, bool) { return l(k) }
 func str(l func(string) (string, bool), k, d string, empty bool) (string, error) {

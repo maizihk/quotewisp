@@ -19,6 +19,38 @@ func TestModesAndDefaults(t *testing.T) {
 	}
 }
 
+func TestSQLiteDefaultsAllModesAndDataDir(t *testing.T) {
+	for _, mode := range []Mode{ModeService, ModeImport, ModeMigrate, ModeWeb, ModeWebAdmin, ModeCombined} {
+		m := map[string]string{}
+		if mode == ModeWeb || mode == ModeCombined {
+			m["SITE_CONTACT"] = "ops@example.com"
+		}
+		c, err := load(mode, env(m))
+		if err != nil {
+			t.Fatalf("mode %d: %v", mode, err)
+		}
+		if c.MYSQLDSN != "" || !strings.HasSuffix(c.SQLitePath, "/quotewisp.db") {
+			t.Fatalf("mode %d dsn=%q path=%q", mode, c.MYSQLDSN, c.SQLitePath)
+		}
+	}
+	c, err := load(ModeService, env(map[string]string{"DATA_DIR": "/tmp/custom data"}))
+	if err != nil || c.MYSQLDSN != "" || c.SQLitePath != "/tmp/custom data/quotewisp.db" {
+		t.Fatalf("custom data dir: %v %#v", err, c)
+	}
+}
+
+func TestEmptyLegacyDSNRejected(t *testing.T) {
+	if _, err := load(ModeService, env(map[string]string{"MYSQL_DSN": ""})); err == nil {
+		t.Fatal("accepted empty MYSQL_DSN")
+	}
+	for _, dsn := range []string{"sqlite:u:p@tcp(localhost:3306)/db", "sqlitefile:u:p@tcp(localhost:3306)/db"} {
+		c, err := load(ModeService, env(map[string]string{"MYSQL_DSN": dsn}))
+		if err != nil || c.MYSQLDSN != dsn || c.SQLitePath != "" {
+			t.Fatalf("legacy DSN %q changed: err=%v config=%+v", dsn, err, c)
+		}
+	}
+}
+
 func TestDatabaseEnvironment(t *testing.T) {
 	m := map[string]string{"DB_HOST": "2001:db8::1", "DB_NAME": "app", "DB_USER": "user", "DB_PASSWORD": " p@ss?&/ ", "DB_PORT": "3307", "DB_TLS": "true"}
 	c, err := load(ModeImport, env(m))
@@ -111,8 +143,8 @@ var webSecret = strings.Repeat("a", 32)
 
 func TestWebRequiredMissing(t *testing.T) {
 	for _, x := range []map[string]string{{"WEB_SECRET_KEY": webSecret, "SITE_CONTACT": "contact@example.com"}} {
-		if _, e := load(ModeWeb, env(x)); e == nil {
-			t.Fatalf("accepted %#v", x)
+		if c, e := load(ModeWeb, env(x)); e != nil || c.MYSQLDSN != "" || c.SQLitePath == "" {
+			t.Fatalf("default SQLite rejected: %v %#v", e, c)
 		}
 	}
 }
@@ -186,8 +218,8 @@ func TestWebValidation(t *testing.T) {
 	}
 }
 func TestWebAdminRequiredMissing(t *testing.T) {
-	if _, e := load(ModeWebAdmin, env(map[string]string{})); e == nil {
-		t.Fatal("accepted missing MYSQL_DSN")
+	if c, e := load(ModeWebAdmin, env(map[string]string{})); e != nil || c.MYSQLDSN != "" || c.SQLitePath == "" {
+		t.Fatalf("default SQLite rejected: %v %#v", e, c)
 	}
 }
 func TestWebAdminDefaultsAndPool(t *testing.T) {

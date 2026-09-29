@@ -1,21 +1,19 @@
 services:
   quotewisp:
-    image: maizihk/quotewisp:1.0.0-rc.5
+    image: ${QUOTEWISP_IMAGE:-quotewisp:local}
+    build: .
     container_name: quotewisp
     restart: unless-stopped
     stop_grace_period: 15s
     user: "65532:65532"
     env_file:
       - path: ./.env
+        required: false
         format: raw
     ports:
       - "18080:8080"
     volumes:
-      - ./data:/var/lib/quotewisp
-    networks:
-      - onepanel-network
+      - quotewisp-data:/var/lib/quotewisp
 
-networks:
-  onepanel-network:
-    name: 1panel-network
-    external: true
+volumes:
+  quotewisp-data:

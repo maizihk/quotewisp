@@ -53,8 +53,8 @@ func TestBuildAndSelectBoundaries(t *testing.T) {
 }
 func TestBuilderValidation(t *testing.T) {
 	b := NewBuilder(1, time.Time{})
-	if _, e := b.Build(context.Background()); e == nil {
-		t.Fatal("accepted empty snapshot")
+	if _, e := NewBuilder(0, time.Time{}).Build(context.Background()); e == nil {
+		t.Fatal("accepted zero version")
 	}
 	if e := b.AddCategory(CategoryRow{"a", "A", 0}); e != nil {
 		t.Fatal(e)
@@ -159,5 +159,63 @@ func TestManagerFailureCancellationAndLowerVersion(t *testing.T) {
 	}
 	if m.Current() != old {
 		t.Fatal("cancel replaced snapshot")
+	}
+}
+
+// Empty datasets are valid loaded snapshots; failed loads are a separate state.
+type emptyLoader struct {
+	value *Snapshot
+	err   error
+}
+
+func (l *emptyLoader) Version(context.Context) (uint64, error) { return l.value.Version, nil }
+func (l *emptyLoader) Load(context.Context) (*Snapshot, error) { return l.value, l.err }
+
+func TestEmptyDatasetReadinessAndRefresh(t *testing.T) {
+	ctx := context.Background()
+	empty, err := NewBuilder(8, time.Time{}).Build(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.SentenceCount != 0 || len(empty.Categories) != 0 || empty.LoadedAt.IsZero() {
+		t.Fatalf("invalid empty snapshot: %+v", empty)
+	}
+	if _, err := empty.Select(nil, 0, 1000, nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("empty random: %v", err)
+	}
+	loader := &emptyLoader{value: empty}
+	manager := NewManager(loader, time.Second)
+	if manager.Ready() {
+		t.Fatal("unloaded manager ready")
+	}
+	if err := manager.LoadInitial(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !manager.Ready() || manager.Current() != empty {
+		t.Fatal("empty snapshot not ready")
+	}
+	loader.value = builtForVersion(9)
+	if changed, err := manager.Refresh(ctx, false); !changed || err != nil {
+		t.Fatalf("populate: %v %v", changed, err)
+	}
+	empty.Version = 10
+	loader.value = empty
+	if changed, err := manager.Refresh(ctx, false); !changed || err != nil {
+		t.Fatalf("delete all: %v %v", changed, err)
+	}
+	loader.err = errors.New("database unavailable")
+	if _, err := manager.Refresh(ctx, true); err == nil {
+		t.Fatal("failed reload accepted")
+	}
+	if !manager.Ready() || manager.Current() != empty {
+		t.Fatal("failed reload discarded empty snapshot")
+	}
+	loader.err = nil
+	loader.value = &Snapshot{Version: 0}
+	if _, err := manager.Refresh(ctx, true); err == nil {
+		t.Fatal("zero version accepted")
+	}
+	if manager.Current() != empty {
+		t.Fatal("invalid reload discarded snapshot")
 	}
 }
