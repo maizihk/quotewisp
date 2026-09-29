@@ -1,0 +1,37 @@
+{
+  "go": "go1.27.1 linux/amd64",
+  "fuzztime": "30s per target",
+  "parallel": 2,
+  "targets": [
+    {
+      "target": "FuzzQueryParameters",
+      "executions": 805988,
+      "result": "passed"
+    },
+    {
+      "target": "FuzzUUIDPath",
+      "executions": 1291021,
+      "result": "passed"
+    },
+    {
+      "target": "FuzzCategories",
+      "executions": 1301131,
+      "result": "passed"
+    },
+    {
+      "target": "FuzzProblem",
+      "executions": 38232,
+      "result": "passed"
+    },
+    {
+      "target": "FuzzValidateSubmission",
+      "executions": 536626,
+      "result": "passed"
+    },
+    {
+      "target": "FuzzAdminUUIDPath",
+      "executions": 441311,
+      "result": "passed"
+    }
+  ]
+}

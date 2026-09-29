@@ -14,7 +14,7 @@
 
 从提交导出干净构建上下文，以 `VERSION=v1.0.0`、完整 `GIT_COMMIT`、真实 UTC `BUILD_TIME` 构建本地候选镜像。工作区已有的 `docs/environment.md` 用户改动不纳入本次发布提交。
 
-使用不可变 image ID 运行 `scripts/smoke-release-image.py`，核对 `/version` 三项元数据、API/Web 页面、两次容器启动、schema 5、seed 和密钥持久化。再用 `scripts/verify-sqlite-release.py` 对该镜像复验升级、12000 条原生导入、Hitokoto 导入、恢复与回滚。本次候选的具体提交、image ID 和结果记录在 [正式候选验收](release-v1.0.0-validation.md)。
+使用不可变 image ID 运行 `scripts/smoke-release-image.py`，核对 `/version` 三项元数据、API/Web 页面、两次容器启动、schema 5、seed 和密钥持久化。再用 `scripts/verify-sqlite-release.py` 对该镜像复验升级、12000 条原生导入、Hitokoto 导入、恢复与回滚。本次候选已通过上述验收，具体提交、image ID 和结果记录在 [正式候选验收](release-v1.0.0-validation.md)。
 
 当前构建仅覆盖 Linux amd64，不宣称多架构发布。此前性能结果覆盖相同应用源码；仅改变版本元数据和发布脚本无需重跑完整压测，但最终镜像必须单独 smoke。
 

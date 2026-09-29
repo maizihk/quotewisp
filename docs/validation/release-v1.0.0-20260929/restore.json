@@ -1,0 +1,20 @@
+{
+  "image": "sha256:06862886bc408afa417390ffed1e9b402fc3c66fd4ad123e7f29073c18d1d4b5",
+  "baseline_image": "sha256:1b5cce0d28198597ff9869fb54c516fb585a900732efc98f152728ca00e91b7d",
+  "fresh": {
+    "schema": 5,
+    "sentences": 1,
+    "admins": 0
+  },
+  "before": {
+    "schema": 4,
+    "sentences": 1,
+    "admins": 1
+  },
+  "after": {
+    "schema": 5,
+    "sentences": 12002,
+    "admins": 1
+  },
+  "result": "passed"
+}
