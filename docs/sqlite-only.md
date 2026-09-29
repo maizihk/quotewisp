@@ -25,3 +25,11 @@
 CI 保留 quality、fuzz、integration、image 四项门禁；integration 执行 SQLite 合约和 HTTP 闭环，image 执行 SQLite 持久化与 API/Web 验收。正式发布仍采用个人免费仓库的手动 GHCR 流程，见 [发布说明](../.github/RELEASE.md)。
 
 2026-09-29 本地 Go 1.27.1 全量 race、vet、`CGO_ENABLED=0` 构建及 HTTP E2E 通过；首次并发初始化连续 30 次通过。历史双数据库候选的性能与验收记录保留作为历史证据，不宣称为本次新镜像的测试结果。正式发布与生产部署尚未执行。
+
+## 最终镜像验收
+
+从干净提交 `c038a9b12f3de6655c1603dd6650bd6d8f87be79` 构建 Linux amd64 镜像 `quotewisp:sqlite-only-validation`，版本 `v1.0.0`，UTC 构建时间 `2026-09-29T09:02:09Z`；不可变本地 image ID 为 `sha256:8cb1e520ef441c9b0a0fd4dab58e1ffe6b880781000acc1cb5b7c4570139e2ed`。这是本地验收制品，不是已推送的 registry digest。
+
+该镜像通过两次启动的 API/Web smoke、版本元数据核对、schema 5 与 seed/密钥持久化检查；还通过 schema 4→5 升级、12000 条原生 JSON 与 1 条 Hitokoto 导入（最终 12002 条）、账号/站点设置保留、新卷恢复、导入回执恢复、重建持久化、拒绝不兼容旧镜像，以及旧备份配匹配旧镜像回滚。脚本退出成功并清理隔离容器和命名卷。
+
+证据：[构建参数](validation/sqlite-only-20260929/build.json)、[API/Web 与持久化](validation/sqlite-only-20260929/smoke.json)、[升级与恢复](validation/sqlite-only-20260929/restore.json)。后续提交若作为正式标签目标，应以该提交重新构建并验证元数据；本次未重跑历史 1000 RPS 压测。

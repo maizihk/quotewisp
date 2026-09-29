@@ -1,0 +1,15 @@
+{
+  "result": "passed",
+  "image": "sha256:8cb1e520ef441c9b0a0fd4dab58e1ffe6b880781000acc1cb5b7c4570139e2ed",
+  "metadata": {
+    "version": "v1.0.0",
+    "git_commit": "c038a9b12f3de6655c1603dd6650bd6d8f87be79",
+    "build_time": "2026-09-29T09:02:09Z"
+  },
+  "boots": 2,
+  "database": {
+    "schema": 5,
+    "sentences": 1,
+    "admins": 0
+  }
+}
