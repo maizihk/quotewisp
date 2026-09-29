@@ -64,10 +64,13 @@ const columns = "id,admin_id,digest,format,status,result_json,error_text,categor
 
 type scanner interface{ Scan(...any) error }
 
-func scan(row scanner) (Job, error) {
+func scan(ctx context.Context, row scanner) (Job, error) {
 	var j Job
 	var result, message, categories sql.NullString
 	err := row.Scan(&j.ID, &j.AdminID, &j.Digest, &j.Format, &j.Status, &result, &message, &categories, &j.CreatedAt, &j.ExpiresAt, &j.UpdatedAt)
+	if err != nil && ctx.Err() != nil {
+		return j, ctx.Err()
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return j, ErrNotFound
 	}
@@ -93,20 +96,23 @@ func (m *Manager) Get(ctx context.Context, owner uint64, id string) (Job, error)
 	if !validID(id) {
 		return Job{}, ErrNotFound
 	}
-	return scan(m.opts.DB.QueryRowContext(ctx, "SELECT "+columns+" FROM import_jobs WHERE id=? AND admin_id=?", id, owner))
+	return scan(ctx, m.opts.DB.QueryRowContext(ctx, "SELECT "+columns+" FROM import_jobs WHERE id=? AND admin_id=?", id, owner))
 }
 func (m *Manager) get(ctx context.Context, id string) (Job, error) {
-	return scan(m.opts.DB.QueryRowContext(ctx, "SELECT "+columns+" FROM import_jobs WHERE id=?", id))
+	return scan(ctx, m.opts.DB.QueryRowContext(ctx, "SELECT "+columns+" FROM import_jobs WHERE id=?", id))
 }
 func (m *Manager) List(ctx context.Context, owner uint64) ([]Job, error) {
 	rows, err := m.opts.DB.QueryContext(ctx, "SELECT "+columns+" FROM import_jobs WHERE admin_id=? ORDER BY created_at DESC,id DESC LIMIT 50", owner)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, errors.New("list import jobs")
 	}
 	defer rows.Close()
 	out := []Job{}
 	for rows.Next() {
-		j, err := scan(rows)
+		j, err := scan(ctx, rows)
 		if err != nil {
 			return nil, err
 		}
@@ -273,6 +279,15 @@ func (m *Manager) clearLocked(id string) {
 	_ = os.Remove(m.path(id))
 }
 func (m *Manager) release(id string) { m.mu.Lock(); defer m.mu.Unlock(); m.clearLocked(id) }
+
+// Publish terminal status only after cleanup. Mutating requests hold the same
+// mutex, so an observed terminal job can immediately be retried or replaced.
+func (m *Manager) finish(ctx context.Context, id, status, message string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clearLocked(id)
+	_ = m.setStatus(ctx, id, status, message)
+}
 func (m *Manager) expireLocked(ctx context.Context) error {
 	if m.active == "" {
 		return nil
@@ -390,8 +405,7 @@ func (m *Manager) fail(id string, err error) {
 	if m.life.Err() != nil {
 		status = "interrupted"
 	}
-	_ = m.setStatus(ctx, id, status, safeError(err))
-	m.release(id)
+	m.finish(ctx, id, status, safeError(err))
 }
 func (m *Manager) execute(task work) {
 	ctx, cancel := context.WithTimeout(m.life, m.opts.Timeout)
@@ -433,8 +447,7 @@ func (m *Manager) execute(task work) {
 			return
 		}
 		if !time.Now().Before(j.ExpiresAt) {
-			_ = m.setStatus(ctx, j.ID, "expired", "预览已过期，请重新上传。")
-			m.release(j.ID)
+			m.finish(ctx, j.ID, "expired", "预览已过期，请重新上传。")
 			return
 		}
 		result, _ := json.Marshal(summary)
@@ -499,17 +512,16 @@ func (m *Manager) committed(ctx context.Context, id string) (bool, error) {
 	return status == "committed" || status == "complete" || status == "refresh_failed", nil
 }
 func (m *Manager) refresh(id string) {
-	defer m.release(id)
 	ctx, cancel := context.WithTimeout(m.life, m.opts.Timeout)
 	err := m.opts.Refresh(ctx)
 	cancel()
 	save, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
 	if err != nil {
-		_ = m.setStatus(save, id, "refresh_failed", "数据已写入，快照刷新未完成。可单独重试刷新，无需再次导入。")
+		m.finish(save, id, "refresh_failed", "数据已写入，快照刷新未完成。可单独重试刷新，无需再次导入。")
 		return
 	}
-	_ = m.setStatus(save, id, "complete", "")
+	m.finish(save, id, "complete", "")
 }
 func (m *Manager) recover(ctx context.Context) error {
 	// These conditional updates lock the receipt row. If an old transaction is
@@ -547,6 +559,5 @@ func (m *Manager) recover(ctx context.Context) error {
 func (m *Manager) refreshFailed(id string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.setStatus(ctx, id, "refresh_failed", "数据已写入，快照刷新未完成。可单独重试刷新。")
-	m.release(id)
+	m.finish(ctx, id, "refresh_failed", "数据已写入，快照刷新未完成。可单独重试刷新。")
 }

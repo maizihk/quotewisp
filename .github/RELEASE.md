@@ -1,8 +1,18 @@
 # 版本发布
 
-工作流适用于个人免费仓库。普通提交、PR 和标签推送执行检查；发布需要手动触发。
+代码、版本标签和 Release 发布到 GitHub，镜像发布到 Docker Hub。工作流适用于个人免费仓库；普通提交、PR 和标签推送执行检查。
 
-## 发布步骤
+## 本地发布
+
+使用本地 Docker Hub 登录凭据发布，无需将令牌上传到 GitHub。
+
+1. 推送代码到 `main`，等待 GitHub CI 全部通过。
+2. 从该提交的 `git archive` 构建镜像，设置 `VERSION`、完整 `GIT_COMMIT` 和 UTC `BUILD_TIME`。先推送 `git-<完整提交 SHA>` 镜像标签。
+3. 按 Docker Hub 返回的 digest 拉取镜像，运行 `scripts/smoke-release-image.py` 验证版本、API/Web 和 SQLite 持久化。
+4. 为同一提交创建并推送带注释的版本标签，为已验证镜像推送对应版本标签，核对远端 digest。
+5. 创建 GitHub Release，记录镜像地址、digest、平台和验证结果。部署前按 [运行文档](../docs/operations.md) 备份。
+
+## 可选：通过 GitHub Actions 发布
 
 1. 将工作流合入默认分支 `main`，推送待发布提交及对应的 `vMAJOR.MINOR.PATCH` 标签。
 2. 对该标签运行：

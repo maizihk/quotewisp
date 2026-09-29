@@ -335,3 +335,30 @@ func TestManagerSQLiteRefreshRetryAndRecovery(t *testing.T) {
 		t.Fatalf("SQLite recovered upload retained: %v", err)
 	}
 }
+
+func TestManagerQueriesPreserveContextErrors(t *testing.T) {
+	f := newManagerFixture(t, time.Minute, nil)
+	for _, timeout := range []bool{false, true} {
+		name := "canceled"
+		want := context.Canceled
+		ctx, cancel := context.WithCancel(context.Background())
+		if timeout {
+			cancel()
+			name, want = "deadline", context.DeadlineExceeded
+			ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		}
+		cancel()
+		t.Run(name, func(t *testing.T) {
+			if _, err := f.m.List(ctx, 1); !errors.Is(err, want) {
+				t.Fatalf("List error = %v, want %v", err, want)
+			}
+			const id = "75a45fd4-4f2f-45eb-80cb-6f0a7bcdfaf2"
+			if _, err := f.m.Get(ctx, 1, id); !errors.Is(err, want) {
+				t.Fatalf("Get error = %v, want %v", err, want)
+			}
+			if _, err := f.m.get(ctx, id); !errors.Is(err, want) {
+				t.Fatalf("get error = %v, want %v", err, want)
+			}
+		})
+	}
+}
