@@ -1,78 +1,25 @@
-# Personal GitHub Free release workflow
+# 版本发布
 
-This repository supports a personal private repository on GitHub Free. Tag
-rulesets, protected environments, required reviewers, external database secrets
-and a paid account are not required. This replaces the previous protected-tag
-release policy at the owner's request.
+工作流适用于个人免费仓库。普通提交、PR 和标签推送执行检查；发布需要手动触发。
 
-## Checks and publication
+## 发布步骤
 
-Pushes to main, `v*` tag pushes, pull requests and manual runs execute quality,
-fuzz, integration and image checks. All database tests use isolated temporary
-SQLite files without external services, DSNs or secrets. The integration job runs
-SQLite business contracts and the submission/approval HTTP flow; the image job
-verifies SQLite initialization, persistence and API/Web behavior. MySQL/MariaDB
-support has been removed.
+1. 将工作流合入默认分支 `main`，推送待发布提交及对应的 `vMAJOR.MINOR.PATCH` 标签。
+2. 对该标签运行：
 
-Publishing requires a manual `workflow_dispatch` with `publish=true`, on an
-existing stable tag matching `vMAJOR.MINOR.PATCH`. Branches and prerelease tags
-are rejected before registry login. Default `publish=false` runs checks only.
-The publish job depends on all four check jobs and checks out the event commit
-explicitly. Ordinary pushes never publish images.
+   ```sh
+   gh workflow run ci.yml --repo maizihk/quotewisp --ref v1.0.0 -f publish=true
+   ```
 
-The workflow must first exist on the default branch (`main`) to enable manual
-runs. After pushing the reviewed commit and its intended release tag, run:
+3. 等待 quality、fuzz、integration、image 全部通过。publish 会构建并推送镜像，再按 digest 拉取，检查版本信息、API/Web 与 SQLite 持久化。
+4. 从流水线摘要记录已验收的 digest，按 [运行文档](../docs/operations.md) 备份并部署。
 
-```sh
-gh workflow run ci.yml --repo maizihk/quotewisp --ref v1.0.0 -f publish=true
-```
+默认 `publish=false` 只执行检查。分支和预发布标签不能执行正式发布。工作流不会自动部署或创建 GitHub Release 页面。
 
-Users with repository write access can manually run workflows. This is not an
-independent approval or a protected-tag guarantee: on the free private repository,
-writers may modify tags or workflow code. Keep write access limited to trusted
-maintainers. The workflow serializes publishes for a given ref; it does not make
-Git or registry tags immutable, and a rerun can replace a version tag. Record and
-deploy the successful digest, not a mutable tag.
+## 镜像仓库
 
-## Registry and final artifact
+默认目标为 `ghcr.io/maizihk/quotewisp`，通用命名规则为小写的 `ghcr.io/<owner>/<repository>`。publish 使用内置 `GITHUB_TOKEN` 和 `packages: write` 权限，无需额外发布密钥。
 
-The target is `ghcr.io/<lowercase owner>/<lowercase repository>` (currently
-`ghcr.io/maizihk/quotewisp`). Authentication uses the workflow's `GITHUB_TOKEN`
-with `packages: write` only in the publish job; other jobs have `contents: read`.
-No `release`/`integration` environment, `IMAGE_*` variables, `REGISTRY_*` secrets
-or `MYSQL_TEST_DSN` secret needs configuration. Existing unused environments may
-remain; this change does not delete them.
+新包默认私有；已有同名包需授予本仓库 Actions 写权限。私有镜像部署端需要自己的读取凭证。Actions 需已启用且有可用额度。
 
-New GHCR packages default to private; the workflow does not change repository
-or package visibility. If that package already exists, grant this repository
-Actions write access to it. Private deployment hosts need their own registry
-read credentials; never embed the ephemeral workflow token in deployment files.
-Actions must be enabled and have available account minutes/quota.
-
-The image gets the version, complete commit SHA and UTC build time, and is pushed
-with version and commit tags. The job records its registry digest, pulls that
-digest and runs `scripts/smoke-release-image.py`: exact metadata, API/Web smoke,
-schema-5 initialization and persistence across two containers. A smoke failure
-fails publication acceptance; the pushed image remains and must not be deployed.
-The workflow does not deploy or create a GitHub Release page.
-
-Current images serve both the read API and `web` from one digest. The read API
-supports reads at schema versions 1–5; writes require schema 5. Normal startup
-runs migrations automatically to schema 5. SQLite is the only backend.
-
-For SQLite, stop the single application instance and back up the complete
-`DATA_DIR` (database, WAL/SHM if present, and secret) before replacing the image.
-Start the new image against the existing volume, then verify readiness, login,
-settings and data. Do not run an old schema-4 application against the upgraded
-volume. Roll back with the matching old image and the pre-upgrade backup.
-See `docs/operations.md` and `docs/sqlite-release-validation.md`.
-
-## Evidence
-
-See `docs/release-readiness.md` for current status and
-`docs/release-v1.0.0-validation.md` for the prior locally tested candidate.
-A new tagged commit needs its own version metadata and digest acceptance; the
-previous candidate image must not be relabeled as built from a later commit.
-
-References: [manual workflow runs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow),
-[GHCR authentication and visibility](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+镜像包含版本、完整提交 SHA 和 UTC 构建时间，同时写入版本标签和提交标签。同一标签的发布串行执行，但重跑仍可替换镜像标签；部署使用已验收的 digest。若推送后的检查失败，该镜像不能用于部署。

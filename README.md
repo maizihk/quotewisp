@@ -37,13 +37,9 @@ printf '%s\n' "$admin_password" | docker compose exec -T quotewisp /sentence-api
 unset admin_password
 ```
 
-默认镜像名是 `quotewisp:local`，不会使用尚未包含 SQLite 功能的旧发布镜像。使用已发布且包含本次功能的镜像时，可设置 `QUOTEWISP_IMAGE`，拉取后执行 `docker compose up -d --no-build`。修改 `.env` 后执行 `docker compose up -d --force-recreate`。
+默认镜像名是 `quotewisp:local`。使用发布镜像时，可设置 `QUOTEWISP_IMAGE`，拉取后执行 `docker compose up -d --no-build`。修改 `.env` 后执行 `docker compose up -d --force-recreate`。
 
-也可将卷替换为 `./data:/var/lib/quotewisp`，但需提前创建目录并赋予 UID/GID `65532:65532` 写权限，目录权限设为 `700`。已有部署升级时保留原卷或绑定目录，勿直接用新命名卷替换原有密钥目录；外部数据库配置也须保留。
-
-## 数据库与旧配置
-
-仅使用 `DATA_DIR/quotewisp.db`。旧 `DB_*`、`MYSQL_DSN` 和 `MYSQL_*` 连接池配置已移除，设置这些变量会明确报错；不会把外部数据库自动转换为 SQLite。已有 SQLite schema 5 文件可继续使用，升级前按运行文档备份。
+也可将卷替换为 `./data:/var/lib/quotewisp`，但需提前创建目录并赋予 UID/GID `65532:65532` 写权限，目录权限设为 `700`。已有部署升级时保留原卷或绑定目录，勿直接用新命名卷替换原有密钥目录。
 
 ## 管理与导入
 
@@ -73,4 +69,12 @@ CGO_ENABLED=0 go build ./cmd/api
 
 SQLite 使用 WAL。备份时停止应用后复制整个数据目录（含数据库、WAL/SHM 和密钥），或使用 SQLite 一致性备份工具；禁止运行中只复制 `quotewisp.db`。恢复前停止应用，保留原文件并恢复目录权限。高于当前程序支持的数据库版本会拒绝启动，不会自动降级。详见 [运行与回滚](docs/operations.md)。
 
-阶段目标与验收范围见 [下一阶段开发计划](docs/next-development.md)。`docs/deployment-*.md` 和单容器部署记录是历史验收记录，不代表本地改动已经发布或生产已经升级。
+## 文档
+
+- [API 与开发](docs/development-spec.md)
+- [前台与管理后台](docs/web-spec.md)
+- [导入格式](docs/import-format.md)
+- [SQLite 存储](docs/sqlite-only.md)
+- [部署、备份与回滚](docs/operations.md)
+- [性能测试](docs/performance.md)
+- [版本发布](.github/RELEASE.md)

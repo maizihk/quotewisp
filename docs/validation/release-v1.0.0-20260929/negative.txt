@@ -1,1 +1,0 @@
-PASS: wrong version rejected; temporary smoke/drill resources cleaned.
