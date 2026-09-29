@@ -1,19 +1,59 @@
-# Release gate configuration
+# Personal GitHub Free release workflow
 
-The `publish` job runs only for a `vMAJOR.MINOR.PATCH` tag when GitHub reports
-that the ref is protected. Configure a repository tag ruleset for `v*` and
-protect the `release` environment with required reviewers. Configure the
-`integration` environment so its `MYSQL_TEST_DSN` secret is available only to
-trusted branch, protected-tag, and manually dispatched runs. Pull requests run
-the integration test package without a DSN to verify its explicit skip path and
-never bind the secret-bearing environment.
+This repository supports a personal private repository on GitHub Free. Tag
+rulesets, protected environments, required reviewers, external database secrets
+and a paid account are not required. This replaces the previous protected-tag
+release policy at the owner's request.
 
-The current external database gate targets MariaDB 11.8. The workflow does not
-claim MySQL 8.4 integration coverage until a separate trusted MySQL 8.4 DSN is
-configured and run. The `integration` job uses an external DSN secret and never
-starts a database container. The `image` job starts MariaDB 11.8 only to smoke
-the production image (`web` subcommand and HTTP probes); that service is not a
-substitute for the external integration gate.
+## Checks and publication
+
+Pushes to main, `v*` tag pushes, pull requests and manual runs execute quality,
+fuzz, integration and image checks. The integration job always starts its own
+MariaDB 11.8 service and runs the complete race suite with a nonempty local DSN;
+it does not silently skip database tests or connect to production. Its password
+is disposable CI configuration, not a repository secret. MySQL 8.4 is not covered.
+
+Publishing requires a manual `workflow_dispatch` with `publish=true`, on an
+existing stable tag matching `vMAJOR.MINOR.PATCH`. Branches and prerelease tags
+are rejected before registry login. Default `publish=false` runs checks only.
+The publish job depends on all four check jobs and checks out the event commit
+explicitly. Ordinary pushes never publish images.
+
+The workflow must first exist on the default branch (`main`) to enable manual
+runs. After pushing the reviewed commit and its intended release tag, run:
+
+```sh
+gh workflow run ci.yml --repo maizihk/quotewisp --ref v1.0.0 -f publish=true
+```
+
+Users with repository write access can manually run workflows. This is not an
+independent approval or a protected-tag guarantee: on the free private repository,
+writers may modify tags or workflow code. Keep write access limited to trusted
+maintainers. The workflow serializes publishes for a given ref; it does not make
+Git or registry tags immutable, and a rerun can replace a version tag. Record and
+deploy the successful digest, not a mutable tag.
+
+## Registry and final artifact
+
+The target is `ghcr.io/<lowercase owner>/<lowercase repository>` (currently
+`ghcr.io/maizihk/quotewisp`). Authentication uses the workflow's `GITHUB_TOKEN`
+with `packages: write` only in the publish job; other jobs have `contents: read`.
+No `release`/`integration` environment, `IMAGE_*` variables, `REGISTRY_*` secrets
+or `MYSQL_TEST_DSN` secret needs configuration. Existing unused environments may
+remain; this change does not delete them.
+
+New GHCR packages default to private; the workflow does not change repository
+or package visibility. If that package already exists, grant this repository
+Actions write access to it. Private deployment hosts need their own registry
+read credentials; never embed the ephemeral workflow token in deployment files.
+Actions must be enabled and have available account minutes/quota.
+
+The image gets the version, complete commit SHA and UTC build time, and is pushed
+with version and commit tags. The job records its registry digest, pulls that
+digest and runs `scripts/smoke-release-image.py`: exact metadata, API/Web smoke,
+schema-5 initialization and persistence across two containers. A smoke failure
+fails publication acceptance; the pushed image remains and must not be deployed.
+The workflow does not deploy or create a GitHub Release page.
 
 Current images serve both the read API and `web` from one digest. The read API
 supports reads at schema versions 1–5; writes require schema 5. Normal startup
@@ -29,26 +69,12 @@ For MariaDB, back up the database and application secret, coordinate all readers
 and writers, and plan the automatic migration before starting the new image.
 See `docs/operations.md` and `docs/sqlite-release-validation.md`.
 
-Set `IMAGE_REGISTRY`, `IMAGE_NAME`, `REGISTRY_USERNAME`, and
-`REGISTRY_PASSWORD` in the protected `release` environment. A successful
-publish records the immutable registry digest in the GitHub job summary. The
-release environment and protected tag are repository settings and cannot be
-created by workflow YAML.
+## Evidence
 
-The publish metadata check accepts stable tags only (`vMAJOR.MINOR.PATCH`).
-After pushing, the job pulls the resulting immutable digest and runs
-`scripts/smoke-release-image.py`: exact version/commit/build-time checks,
-API/Web smoke, schema-5 initialization, and persistence across two containers.
-A failed smoke fails the job; the already-pushed image is not automatically
-removed and must not be promoted or deployed. This job does not deploy.
+See `docs/release-readiness.md` for current status and
+`docs/release-v1.0.0-validation.md` for the prior locally tested candidate.
+A new tagged commit needs its own version metadata and digest acceptance; the
+previous candidate image must not be relabeled as built from a later commit.
 
-## Current release preparation (2026-09-29)
-
-The intended first stable version is `v1.0.0`. Local candidate acceptance and
-external publication are separate; see `docs/release-readiness.md`.
-A read-only GitHub check found only the `integration` environment, with no
-listed secrets. The `release` environment is absent (404), and the rulesets
-endpoint returns 403 with a GitHub Pro/public-repository requirement. Existing
-protection checks remain enabled. Configure a supported protection setup,
-release credentials/variables and the integration DSN before publishing; never
-make the repository public merely to work around this requirement.
+References: [manual workflow runs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow),
+[GHCR authentication and visibility](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
