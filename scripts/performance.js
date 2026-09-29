@@ -12,6 +12,17 @@ if (__ENV.MIN_REQUESTS) {
   thresholds['http_reqs{scenario:measured}'] = [`count>=${Number(__ENV.MIN_REQUESTS)}`];
 }
 
+// Optional measured-phase interval covering externally scheduled imports.
+// Bounds are relative to the start of measured traffic, not warmup.
+const importStart = Number(__ENV.IMPORT_WINDOW_START || -1);
+const importEnd = Number(__ENV.IMPORT_WINDOW_END || -1);
+if (importStart >= 0 && importEnd > importStart) {
+  thresholds['http_req_duration{scenario:measured,window:import}'] = ['p(95)<10'];
+  thresholds['http_req_failed{scenario:measured,window:import}'] = ['rate==0'];
+  thresholds['http_reqs{scenario:measured,window:import}'] = ['count>0'];
+  thresholds['http_req_duration{scenario:measured,window:steady}'] = ['p(95)<10'];
+}
+
 export const options = {
   scenarios: {
     warmup: {
@@ -38,7 +49,11 @@ const paths = [
 ];
 export function readMix() {
   const path = paths[exec.scenario.iterationInTest % paths.length];
-  const response = http.get(`${base}${path}`, { timeout: __ENV.REQUEST_TIMEOUT || '10s' });
+  const elapsed = (Date.now() - exec.scenario.startTime) / 1000;
+  const window = exec.scenario.name === 'measured' && elapsed >= importStart && elapsed < importEnd ? 'import' : 'steady';
+  const response = http.get(`${base}${path}`, {
+    timeout: __ENV.REQUEST_TIMEOUT || '10s', tags: { window },
+  });
   check(response, { 'valid read returns 200': (r) => r.status === 200 });
 }
 

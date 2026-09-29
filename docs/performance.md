@@ -45,3 +45,7 @@ k6 无法在权限为 0700 的宿主结果目录中写入 `k6-summary.json`，�
 正式阶段确认 10 次 dataset version 刷新，版本从 2 增至 12，全部位于测量阶段；确认延迟约 1.000865–2.008475 秒（1 秒采样精度，刷新版本轮询间隔 5 秒）。CSV 共 660 次有效采样，RSS 与 VmHWM 最大 36,216,832 bytes（34.539 MiB），cgroup memory.current 最大 30,900,224 bytes，memory.peak 最大 31,350,784 bytes（29.898 MiB），Go heap objects 最大 14,704,432 bytes（14.023 MiB），OOM 事件为 0。metrics 成功加载 11 次（含初始加载），failure/canceled 均为 0。
 
 本次证据保存在 `/home/andan/.cache/sentence-performance/sentence_retest_14c5e1920605a9c0/`；`cleanup.json` 显示测试容器、环境文件和数据库用户均已清理。此前正式 FAIL 记录、32 VU measured 59,995 请求以及其根因不确定性均保留。
+
+## 2026-09-29 SQLite 大规模导入复测
+
+本轮增加首次管理员初始化保护、修复容器临时目录与批量查重性能，完成 312001 条语句规模的 1000 RPS、10 分钟测试。64 VU 测量出现 5 次丢发，128 VU 复测完成 600001 请求、零丢发和零 HTTP 失败。完整环境、失败记录、资源边界和原始证据见 [SQLite 验收报告](sqlite-performance-20260929.md)。

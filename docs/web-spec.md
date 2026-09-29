@@ -415,13 +415,13 @@ CREATE TABLE site_settings (
 ### 7.6 CLI
 
 ```text
-sentence-api web                                   # 启动 web 进程
-sentence-api web admin create --username <name>
+sentence-api web                                   # 兼容入口，同进程提供 Web 与 API
+sentence-api web admin create --username <name> --password-stdin
 sentence-api web admin disable --username <name>
-sentence-api web admin reset-password --username <name>
+sentence-api web admin reset-password --username <name> --password-stdin
 ```
 
-密码从标准输入读取（不回显、两次确认），不接受命令行参数，不打印。`create` 用于首个管理员，后续应通过后台创建以留下 `created_by`。`admin` 子命令使用 `MYSQL_DSN`，不要求其他 web 配置。
+密码通过 `--password-stdin` 从标准输入读取，不作为命令行参数，也不打印。交互式隐藏输入由部署者的 shell 完成，CLI 不提供两次确认提示。`create` 仅用于首个管理员；数据库已有任何管理员（含停用账号）时拒绝，并发初始化也只能成功一次。后续通过后台创建以留下 `created_by`，恢复访问使用 `reset-password` 或 `enable`。`admin` 子命令支持默认 SQLite，以及完整 `DB_*` 或旧 `MYSQL_DSN` 配置，不要求其他 web 配置。
 
 ## 8. 句子库导出与署名
 

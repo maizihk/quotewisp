@@ -1,0 +1,79 @@
+{
+  "started_utc": "2026-09-29T07:54:03Z",
+  "os": "Linux-6.12.107+deb13-amd64-x86_64-with-glibc2.41",
+  "cpus": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "application_cpu": 0,
+  "load_cpus": [
+    2,
+    3
+  ],
+  "memory_limit_bytes": 1073741824,
+  "preallocated_vus": 128,
+  "max_vus": 256,
+  "gomemlimit": "768MiB",
+  "tmpfs_limit_bytes": 268435456,
+  "rps": 1000,
+  "warmup_seconds": 60,
+  "measurement_seconds": 600,
+  "import_window_measured_seconds": [
+    60,
+    300
+  ],
+  "imports": [
+    {
+      "rows": 12000,
+      "start_id": 1,
+      "file_bytes": 2646780,
+      "upload_preview_seconds": 0.1178539339452982,
+      "commit_refresh_seconds": 0.34611850895453244,
+      "started_after_load_seconds": null,
+      "completed_after_load_seconds": null
+    },
+    {
+      "rows": 100000,
+      "start_id": 12001,
+      "file_bytes": 22114419,
+      "upload_preview_seconds": 0.7780377200106159,
+      "commit_refresh_seconds": 2.890194138046354,
+      "started_after_load_seconds": 130.2267526970245,
+      "completed_after_load_seconds": 133.89586635201704
+    },
+    {
+      "rows": 100000,
+      "start_id": 112001,
+      "file_bytes": 22114419,
+      "upload_preview_seconds": 0.8671668519964442,
+      "commit_refresh_seconds": 3.6832898299908265,
+      "started_after_load_seconds": 206.10979116999079,
+      "completed_after_load_seconds": 210.6611341739772
+    },
+    {
+      "rows": 100000,
+      "start_id": 212001,
+      "file_bytes": 22114419,
+      "upload_preview_seconds": 0.9016539360163733,
+      "commit_refresh_seconds": 4.891317729023285,
+      "started_after_load_seconds": 280.88960338104516,
+      "completed_after_load_seconds": 286.68345921998844
+    }
+  ],
+  "cpu_model": "12th Gen Intel(R) Core(TM) i5-12400",
+  "host_go_version": "go version go1.27.1 linux/amd64",
+  "image_id": "sha256:8a63e2f61b77d883bc4033ecdb19d67fb078088f5bf88e1ae0b253a5510149df",
+  "k6_version": "k6 v0.54.0 (commit/baba871c8a, go1.23.1, linux/amd64)",
+  "repeat_cli_initialization_rejected": true,
+  "k6_exit_code": 0,
+  "cgroup_memory_events": "low 0\nhigh 0\nmax 173\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "cgroup_memory_peak_bytes": 1073750016,
+  "database": {
+    "schema": 5,
+    "sentences": 312001,
+    "admins": 1
+  },
+  "result": "passed"
+}

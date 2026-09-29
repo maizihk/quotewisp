@@ -12,10 +12,11 @@ import (
 
 func main() {
 	count := flag.Int("count", 12000, "sentence count")
+	startID := flag.Uint64("start-id", 1, "first UUID suffix for non-overlapping batches")
 	seed := flag.Int64("seed", 20260918, "random seed")
 	flag.Parse()
-	if *count < 1 {
-		fmt.Fprintln(os.Stderr, "count must be positive")
+	if *count < 1 || *startID < 1 || *startID >= 1<<48 || uint64(*count) > (1<<48)-*startID {
+		fmt.Fprintln(os.Stderr, "count and start-id must fit positive 48-bit UUID suffixes")
 		os.Exit(2)
 	}
 	rng := rand.New(rand.NewSource(*seed))
@@ -39,7 +40,7 @@ func main() {
 			category = "long"
 			content = "较长内容：" + strings.Repeat("测试，", 20+rng.Intn(40))
 		}
-		uuid := fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1)
+		uuid := fmt.Sprintf("00000000-0000-4000-8000-%012x", *startID+uint64(i))
 		fmt.Fprintf(w, `{"uuid":%s,"category":%s,"content":%s,"source":"项目合成性能夹具","author":null}`, strconv.Quote(uuid), strconv.Quote(category), strconv.Quote(content))
 	}
 	fmt.Fprint(w, `]}`)

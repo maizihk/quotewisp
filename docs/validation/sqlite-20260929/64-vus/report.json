@@ -1,0 +1,77 @@
+{
+  "started_utc": "2026-09-29T07:42:15Z",
+  "os": "Linux-6.12.107+deb13-amd64-x86_64-with-glibc2.41",
+  "cpus": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "application_cpu": 0,
+  "load_cpus": [
+    2,
+    3
+  ],
+  "memory_limit_bytes": 1073741824,
+  "gomemlimit": "768MiB",
+  "tmpfs_limit_bytes": 268435456,
+  "rps": 1000,
+  "warmup_seconds": 60,
+  "measurement_seconds": 600,
+  "import_window_measured_seconds": [
+    60,
+    300
+  ],
+  "imports": [
+    {
+      "rows": 12000,
+      "start_id": 1,
+      "file_bytes": 2646780,
+      "upload_preview_seconds": 0.1243551759980619,
+      "commit_refresh_seconds": 0.341964130057022,
+      "started_after_load_seconds": null,
+      "completed_after_load_seconds": null
+    },
+    {
+      "rows": 100000,
+      "start_id": 12001,
+      "file_bytes": 22114419,
+      "upload_preview_seconds": 0.7541353050619364,
+      "commit_refresh_seconds": 2.8176283079665154,
+      "started_after_load_seconds": 130.22050952597056,
+      "completed_after_load_seconds": 133.7933041190263
+    },
+    {
+      "rows": 100000,
+      "start_id": 112001,
+      "file_bytes": 22114419,
+      "upload_preview_seconds": 0.8783086559269577,
+      "commit_refresh_seconds": 3.707200259086676,
+      "started_after_load_seconds": 206.02597295003943,
+      "completed_after_load_seconds": 210.61241436505225
+    },
+    {
+      "rows": 100000,
+      "start_id": 212001,
+      "file_bytes": 22114419,
+      "upload_preview_seconds": 0.8566784090362489,
+      "commit_refresh_seconds": 4.98599539604038,
+      "started_after_load_seconds": 280.840373071027,
+      "completed_after_load_seconds": 286.6839730120264
+    }
+  ],
+  "cpu_model": "12th Gen Intel(R) Core(TM) i5-12400",
+  "host_go_version": "go version go1.27.1 linux/amd64",
+  "image_id": "sha256:8a63e2f61b77d883bc4033ecdb19d67fb078088f5bf88e1ae0b253a5510149df",
+  "k6_version": "k6 v0.54.0 (commit/baba871c8a, go1.23.1, linux/amd64)",
+  "repeat_cli_initialization_rejected": true,
+  "k6_exit_code": 99,
+  "cgroup_memory_events": "low 0\nhigh 0\nmax 139\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "cgroup_memory_peak_bytes": 1073750016,
+  "database": {
+    "schema": 5,
+    "sentences": 312001,
+    "admins": 1
+  },
+  "result": "thresholds_failed"
+}

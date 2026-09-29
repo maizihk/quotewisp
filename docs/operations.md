@@ -4,13 +4,15 @@
 
 ## 首次运行与升级
 
-从源码运行 `docker compose up -d --build`，或使用本次改动发布后的明确镜像版本。旧 `1.0.0-rc.*` 镜像不包含 SQLite 支持。应用首次启动自动迁移并写入少量自编示例；管理员用 `web admin create --password-stdin` 在部署终端创建，不提供默认密码或公开安装页。服务不依赖预先导入句库，删除全部语句后也不会重新生成示例。
+从源码运行 `docker compose up -d --build`，或使用本次改动发布后的明确镜像版本。旧 `1.0.0-rc.*` 镜像不包含 SQLite 支持。应用首次启动自动迁移并写入少量自编示例；管理员用 `web admin create --password-stdin` 在部署终端创建，不提供默认密码或公开安装页。此命令仅用于首次初始化，已有任何管理员（包括已停用账号）时会拒绝；后续账号在后台添加，恢复访问使用 `reset-password` 或 `enable`，不要重复初始化。服务不依赖预先导入句库，删除全部语句后也不会重新生成示例。
 
 已有 MySQL/MariaDB 部署保留 `DB_HOST`、`DB_NAME`、`DB_USER`、`DB_PASSWORD` 或旧 `MYSQL_DSN`；二者不得混用，部分配置也会拒绝。外部数据库仍由部署方创建，应用账号需要目标库迁移所需 DDL 权限。启动自动迁移表；已有库升级不注入示例。程序不会自动把外部数据库转换为 SQLite。
 
 升级前备份数据库、密钥、`.env` 和 Compose。已有绑定目录部署应继续使用原目录，不能因仓库 Compose 默认改为命名卷就丢弃原密钥。需要外部 `1panel-network` 的既有反向代理部署，应在自己的 Compose 中保留网络配置。迁移旧显式 `WEB_SECRET_KEY` 时，首次保持原值，让程序保存到原数据目录；确认成功后才移除环境变量。冲突或损坏的密钥不能静默重建。
 
 显式 `migrate up` 可在启动前执行。数据库版本高于程序支持范围、迁移失败或配置错误时应停止升级，查看安全错误阶段与分类；不要尝试通过移除 DB 配置绕过错误。不要把 DSN、令牌或数据写入镜像。
+
+SQLite 大批量写入可能使用临时文件。镜像预建了运行用户可写的 `/tmp`，Compose 额外挂载 默认 256 MiB 的私有 tmpfs（可通过 `SQLITE_TMPFS_SIZE` 调整）。自行使用 `docker run --read-only` 时，也要提供可写临时目录，例如 `--tmpfs /tmp:rw,noexec,nosuid,size=256m,uid=65532,gid=65532,mode=0700`；仅挂载数据库目录不足以覆盖所有大批量操作。临时目录可以清空，数据库与密钥仍只持久化在 `DATA_DIR`。若临时空间不足，应按实际数据规模调整容量。SQLite 的临时文件用途见 [官方说明](https://www.sqlite.org/tempfiles.html)。
 
 ## SQLite 备份与恢复
 
@@ -39,3 +41,5 @@ docker compose start quotewisp
 收到 SIGTERM/SIGINT 后 readiness 失败，后台任务取消，HTTP 请求在 `SHUTDOWN_TIMEOUT` 内排空。超时会强制关闭连接并以失败退出。后台 API 调用统计属于进程内计数，重启后从零开始。
 
 SQLite 测试默认执行；MariaDB 兼容测试可设置 `MYSQL_TEST_DSN`，或运行 `scripts/test-mariadb.sh` 使用本机现有 MariaDB 容器的隔离测试库。测试脚本不打印凭据，会清理测试数据库。`docs/deployment-*.md`、`single-container-deployment.md` 中的生产机器、镜像和回滚记录属于历史资料，本轮源码变更没有对生产执行升级。
+
+可复现的命名卷升级、后台导入、离线备份恢复和旧镜像回滚演练见 [SQLite 发布验收记录](sqlite-release-validation.md)，对应脚本为 `scripts/verify-sqlite-release.py`。该演练使用独立测试卷，不修改现有部署。
