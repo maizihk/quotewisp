@@ -16,6 +16,7 @@ RUN mkdir -p /out/quotewisp-data /out/tmp && chmod 700 /out/quotewisp-data /out/
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/sentence-api /sentence-api
+COPY LICENSE NOTICE /licenses/quotewisp/
 COPY --from=build --chown=65532:65532 /out/quotewisp-data /var/lib/quotewisp
 COPY --from=build --chown=65532:65532 /out/tmp /tmp
 USER 65532:65532

@@ -1,0 +1,10 @@
+Quotewisp
+Copyright 2026 maizihk
+
+The Quotewisp program is licensed under the Apache License, Version 2.0.
+
+Sentence data obtained from the Hitokoto Open Source Community sentence
+bundle is separate from the program and remains subject to its upstream
+AGPL-3.0 license and the rights of the respective sentence authors.
+
+Upstream project: https://github.com/hitokoto-osc/sentences-bundle

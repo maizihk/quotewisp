@@ -18,7 +18,7 @@
 2. 对该标签运行：
 
    ```sh
-   gh workflow run ci.yml --repo maizihk/quotewisp --ref v1.0.0 -f publish=true
+   gh workflow run ci.yml --repo maizihk/quotewisp --ref v1.0.1 -f publish=true
    ```
 
 3. 等待 quality、fuzz、integration、image 全部通过。publish 会构建并推送镜像，再按 digest 拉取，检查版本信息、API/Web 与 SQLite 持久化。
@@ -38,6 +38,6 @@
 
 令牌仅提供给 publish 任务，不写入源码、构建参数或镜像。无需 GitHub Packages 权限、付费标签保护或环境审批。Actions 需已启用且有可用额度。
 
-发布前确认目标版本尚未占用；已有版本应使用新版本号。私有镜像部署端需要自己的 Docker Hub 读取凭证。工作流不修改 Docker Hub 仓库可见性。
+发布前确认目标版本尚未占用；已有版本应使用新版本号。镜像仓库若设为私有，部署端需要自己的 Docker Hub 读取凭证。工作流不修改 Docker Hub 仓库可见性。
 
 镜像包含版本、完整提交 SHA 和 UTC 构建时间，同时写入版本标签和提交标签。同一标签的发布串行执行，但重跑仍可替换镜像标签；部署使用已验收的 digest。若推送后的检查失败，该镜像不能用于部署。

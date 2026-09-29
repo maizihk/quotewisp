@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: 'Publish the selected stable tag to GHCR after all checks pass'
+        description: 'Publish the selected stable tag to Docker Hub after all checks pass'
         type: boolean
         required: true
         default: false

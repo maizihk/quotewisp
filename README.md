@@ -4,6 +4,16 @@
 
 适合搭建个人句子收藏站、文案接口、博客随机语句、应用欢迎语或团队内部语录库。
 
+在线演示：[https://sent.andan.me/](https://sent.andan.me/)
+
+## 为什么有拾句
+
+拾句源于我们对[一言](https://hitokoto.cn/)的使用。一言把散落在动画、文学、网络等地方的句子汇集起来，给了这个项目最初的灵感。
+
+实际接入时，我们遇到过网络响应较慢和接口调用频率受限的情况。一言官方也[建议请求量较大时自行部署接口或增加缓存](https://developer.hitokoto.cn/sentence/)。于是我们写了拾句：把服务和数据放在自己手中，访问速度、调用次数和内容管理都由自己掌握，同时加入投稿、审核和管理后台。
+
+线上演示使用[一言开源社区句子库](https://github.com/hitokoto-osc/sentences-bundle)。感谢一言开源社区长期整理并开放这些内容。
+
 ## 你可以用它做什么
 
 - 在首页随机展示一句话，并按分类和长度筛选。
@@ -27,7 +37,7 @@ docker run -d \
   -e COOKIE_SECURE=false \
   -v quotewisp-data:/var/lib/quotewisp \
   --tmpfs /tmp:rw,noexec,nosuid,size=256m,uid=65532,gid=65532,mode=0700 \
-  maizihk/quotewisp:v1.0.0
+  maizihk/quotewisp:v1.0.1
 ```
 
 浏览器打开 `http://localhost:8080` 即可看到首页。
@@ -88,7 +98,7 @@ curl 'http://localhost:8080/api/v1?categories=original'
 更新前先备份数据卷。然后拉取新镜像并重新创建容器，继续挂载原来的 `quotewisp-data`：
 
 ```bash
-docker pull maizihk/quotewisp:v1.0.0
+docker pull maizihk/quotewisp:v1.0.1
 docker stop quotewisp
 docker rename quotewisp quotewisp-old
 ```
@@ -109,6 +119,13 @@ docker rm quotewisp-old
 
 ## 相关链接
 
+- [在线演示](https://sent.andan.me/)
 - [Docker Hub 镜像](https://hub.docker.com/r/maizihk/quotewisp)
-- [v1.0.0 发布说明](https://github.com/maizihk/quotewisp/releases/tag/v1.0.0)
+- [v1.0.1 发布说明](https://github.com/maizihk/quotewisp/releases/tag/v1.0.1)
 - [导入文件格式](docs/import-format.md)
+
+## 许可与数据来源
+
+拾句程序代码采用 [Apache License 2.0](LICENSE) 开源。
+
+一言开源社区句子库采用 AGPL-3.0 授权，句子著作权并非全部归一言或本项目所有。使用、修改或重新分发相关句子数据时，请遵守[上游授权与使用说明](https://github.com/hitokoto-osc/sentences-bundle)。程序许可证不改变任何句子数据原有的权利和许可。
