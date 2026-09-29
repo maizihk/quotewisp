@@ -1,80 +1,114 @@
-# 拾句 / Quotewisp（sentence-api）
+# 拾句 Quotewisp
 
-纯 Go 的语句 API、投稿前台和管理后台，同一进程监听 `:8080`。公开 API 从原子内存快照读取；数据库用于持久化、后台管理和快照刷新。
+拾句是一个可以自己部署的语句网站。它提供随机一句、分类浏览、访客投稿和管理后台，也可以作为语句 API 使用。
 
-仅支持 SQLite，无需配置外部数据库。首次启动自动迁移并写入少量自编示例，后续启动不会重复写入；删除全部语句后仍可正常启动。SQLite 数据库 `quotewisp.db` 和自动生成的 `web-secret.key` 均位于 `DATA_DIR`（默认 `/var/lib/quotewisp`）。
+适合搭建个人句子收藏站、文案接口、博客随机语句、应用欢迎语或团队内部语录库。
 
-## 本地运行
+## 你可以用它做什么
+
+- 在首页随机展示一句话，并按分类和长度筛选。
+- 让访客提交语句，由管理员审核后发布。
+- 在后台维护语句、分类、投稿、管理员和站点信息。
+- 导入原生 JSON 或 Hitokoto JSON，先预览再确认。
+- 下载当前公开句子库，或通过 API 接入网站和应用。
+- 所有数据保存在一个持久化目录中，方便备份和迁移。
+
+## 用 Docker 启动
+
+先创建数据卷并启动：
 
 ```bash
-go build -o bin/sentence-api ./cmd/api
-DATA_DIR=./data COOKIE_SECURE=false ./bin/sentence-api
+docker volume create quotewisp-data
+
+docker run -d \
+  --name quotewisp \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e COOKIE_SECURE=false \
+  -v quotewisp-data:/var/lib/quotewisp \
+  --tmpfs /tmp:rw,noexec,nosuid,size=256m,uid=65532,gid=65532,mode=0700 \
+  maizihk/quotewisp:v1.0.0
 ```
 
-另开终端创建管理员，密码仅通过标准输入提供：
+浏览器打开 `http://localhost:8080` 即可看到首页。
+
+`COOKIE_SECURE=false` 只适合本机或局域网 HTTP 访问。绑定域名并启用 HTTPS 后，请去掉这一行，重新创建容器。
+
+## 创建第一个管理员
+
+应用不会设置默认账号或密码。容器启动后运行：
 
 ```bash
 read -rs -p '管理员密码: ' admin_password
-printf '%s\n' "$admin_password" | DATA_DIR=./data ./bin/sentence-api web admin create --username admin --password-stdin
+printf '%s\n' "$admin_password" | docker exec -i quotewisp \
+  /sentence-api web admin create --username admin --password-stdin
 unset admin_password
 ```
 
-访问 `http://localhost:8080`，后台位于 `/admin/`。生产 HTTPS 保持 `COOKIE_SECURE=true`；`false` 仅用于本地 HTTP。管理员没有默认密码，也没有公开安装向导。`web admin create` 仅在尚无管理员时成功（并发执行也只允许一次）；后续账号通过后台「管理员」页面添加。遗忘密码使用 `web admin reset-password`，停用账号使用 `web admin enable` 恢复。
+然后打开 `http://localhost:8080/admin/`，使用用户名 `admin` 和刚设置的密码登录。
 
-## Docker Compose
+第一个管理员只能通过上面的命令创建。登录后可以在后台继续添加管理员。
 
-从源码目录构建并启动（Compose >= 2.30）：
+## 日常使用
 
-```bash
-docker compose up -d --build
-```
+首页提供随机一句，`/submit` 是访客投稿页面，`/docs` 提供可以直接复制的 API 示例，`/dataset` 可以查看并下载当前公开句子库。
 
-默认映射 `18080:8080`，为 SQLite 批量操作提供私有 `/tmp` 内存挂载，使用命名卷 `quotewisp-data` 保存数据库及密钥，无需 `.env` 或外部网络。需要本地 HTTP 登录时，创建 `.env` 并写入 `COOKIE_SECURE=false` 后重建容器。生产应由 HTTPS 反向代理转发到容器端口。
+管理后台位于 `/admin/`，主要操作包括：
 
-```bash
-read -rs -p '管理员密码: ' admin_password
-printf '%s\n' "$admin_password" | docker compose exec -T quotewisp /sentence-api web admin create --username admin --password-stdin
-unset admin_password
-```
+1. 在“语句”中新增、编辑、停用或恢复内容。
+2. 在“分类”中创建分类并调整显示顺序。
+3. 在“投稿”中审核访客提交的内容。
+4. 在“导入”中上传 JSON 文件，确认预览后导入。
+5. 在“站点设置”中填写站名、介绍、公开地址和联系信息。
 
-默认镜像名是 `quotewisp:local`。使用发布镜像时，可设置 `QUOTEWISP_IMAGE`，拉取后执行 `docker compose up -d --no-build`。修改 `.env` 后执行 `docker compose up -d --force-recreate`。
+## 在网站或应用中使用
 
-也可将卷替换为 `./data:/var/lib/quotewisp`，但需提前创建目录并赋予 UID/GID `65532:65532` 写权限，目录权限设为 `700`。已有部署升级时保留原卷或绑定目录，勿直接用新命名卷替换原有密钥目录。
-
-## 管理与导入
-
-后台支持语句、分类、投稿审核、管理员及站点设置。登录后进入 `/admin/imports`，可上传原生 JSON 或 Hitokoto JSON，查看预览后确认导入。任务异步执行，结果分别显示数据写入与快照刷新；刷新失败可单独重试。原生命令行导入继续可用：
+获取随机一句：
 
 ```bash
-DATA_DIR=./data ./bin/sentence-api import --file testdata/sentences.json --dry-run
-DATA_DIR=./data ./bin/sentence-api import --file testdata/sentences.json
+curl http://localhost:8080/api/v1
 ```
 
-显式 `migrate up` 仍可用于部署预检，只创建或升级表；预先迁移的空库按已有库处理，不自动添加示例。常用管理员命令：`web admin list`、`web admin reset-password --username U --password-stdin`、`web admin enable|disable --username U`。
-
-主要端点为 `/api/v1`、`/api/v1/sentences/{uuid}`、`/api/v1/categories`、`/healthz`、`/readyz`、`/metrics` 和 `/version`。空库就绪后 `/readyz` 返回 200，随机查询无匹配返回 404。随机与 UUID 查询返回 `uuid`、`content`、`category`、`source`、`author`、`length`，不公开内部 `id`；精确数据集版本位于字符串 `meta.dataset_version`。
-
-公开 API 默认允许不携带 credentials 的跨域访问，可用 `CORS_ALLOWED_ORIGINS` 配置白名单。完整规则见 [开发规格](docs/development-spec.md)、[Web 规格](docs/web-spec.md) 和 [导入格式](docs/import-format.md)。
-
-## 检查与备份
+查看可用分类：
 
 ```bash
-go test ./...
-go test -race ./...
-go vet ./...
-CGO_ENABLED=0 go build ./cmd/api
+curl http://localhost:8080/api/v1/categories
 ```
 
-所有数据库业务测试使用独立临时 SQLite 文件，不依赖外部服务或密钥，也不会因缺少数据库配置而跳过。`make e2e-web` 验证真实投稿、审核和 API 刷新流程。
+按分类获取随机一句：
 
-SQLite 使用 WAL。备份时停止应用后复制整个数据目录（含数据库、WAL/SHM 和密钥），或使用 SQLite 一致性备份工具；禁止运行中只复制 `quotewisp.db`。恢复前停止应用，保留原文件并恢复目录权限。高于当前程序支持的数据库版本会拒绝启动，不会自动降级。详见 [运行与回滚](docs/operations.md)。
+```bash
+curl 'http://localhost:8080/api/v1?categories=original'
+```
 
-## 文档
+在浏览器中打开 `/docs` 可以看到更多现成示例和参数说明。
 
-- [API 与开发](docs/development-spec.md)
-- [前台与管理后台](docs/web-spec.md)
-- [导入格式](docs/import-format.md)
-- [SQLite 存储](docs/sqlite-only.md)
-- [部署、备份与回滚](docs/operations.md)
-- [性能测试](docs/performance.md)
-- [版本发布](.github/RELEASE.md)
+## 更新版本
+
+更新前先备份数据卷。然后拉取新镜像并重新创建容器，继续挂载原来的 `quotewisp-data`：
+
+```bash
+docker pull maizihk/quotewisp:v1.0.0
+docker stop quotewisp
+docker rename quotewisp quotewisp-old
+```
+
+使用“用 Docker 启动”中的命令重新创建容器。确认新容器中的首页、后台和数据正常后，再删除旧容器：
+
+```bash
+docker rm quotewisp-old
+```
+
+请使用明确的版本标签，不要依赖浮动标签。
+
+## 备份数据
+
+数据库、管理员账号、站点设置和应用密钥都在 `quotewisp-data` 中。备份前停止容器，再复制整个数据目录；恢复时也要恢复完整目录。
+
+更完整的升级、备份与恢复步骤见 [使用与维护说明](docs/operations.md)。
+
+## 相关链接
+
+- [Docker Hub 镜像](https://hub.docker.com/r/maizihk/quotewisp)
+- [v1.0.0 发布说明](https://github.com/maizihk/quotewisp/releases/tag/v1.0.0)
+- [导入文件格式](docs/import-format.md)
