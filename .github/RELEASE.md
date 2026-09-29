@@ -18,8 +18,16 @@
 
 ## 镜像仓库
 
-默认目标为 `ghcr.io/maizihk/quotewisp`，通用命名规则为小写的 `ghcr.io/<owner>/<repository>`。publish 使用内置 `GITHUB_TOKEN` 和 `packages: write` 权限，无需额外发布密钥。
+目标为 `docker.io/maizihk/quotewisp`。在仓库 Settings → Secrets and variables → Actions 配置：
 
-新包默认私有；已有同名包需授予本仓库 Actions 写权限。私有镜像部署端需要自己的读取凭证。Actions 需已启用且有可用额度。
+| 类型 | 名称 | 值 |
+| --- | --- | --- |
+| Variable | `DOCKERHUB_USERNAME` | `maizihk` |
+| Variable | `DOCKERHUB_IMAGE` | `maizihk/quotewisp` |
+| Secret | `DOCKERHUB_TOKEN` | 对目标仓库有读写权限的 Docker Hub 访问令牌 |
+
+令牌仅提供给 publish 任务，不写入源码、构建参数或镜像。无需 GitHub Packages 权限、付费标签保护或环境审批。Actions 需已启用且有可用额度。
+
+发布前确认目标版本尚未占用；已有版本应使用新版本号。私有镜像部署端需要自己的 Docker Hub 读取凭证。工作流不修改 Docker Hub 仓库可见性。
 
 镜像包含版本、完整提交 SHA 和 UTC 构建时间，同时写入版本标签和提交标签。同一标签的发布串行执行，但重跑仍可替换镜像标签；部署使用已验收的 digest。若推送后的检查失败，该镜像不能用于部署。
