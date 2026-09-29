@@ -216,7 +216,7 @@ jobs:
           REGISTRY: ${{ vars.IMAGE_REGISTRY }}
           IMAGE: ${{ vars.IMAGE_NAME }}
         run: |
-          echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
+          echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
           test ${#COMMIT} -eq 40
           test -n "$REGISTRY"
           test -n "$IMAGE"
@@ -244,3 +244,15 @@ jobs:
       - name: Record immutable image digest
         run: |
           echo "Image digest: ${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Smoke published immutable digest
+        env:
+          RELEASE_IMAGE: ${{ vars.IMAGE_REGISTRY }}/${{ vars.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_BUILD_TIME: ${{ steps.metadata.outputs.build_time }}
+        run: |
+          docker pull "$RELEASE_IMAGE"
+          python3 scripts/smoke-release-image.py --image "$RELEASE_IMAGE" \
+            --version "$RELEASE_VERSION" --commit "$RELEASE_COMMIT" \
+            --build-time "$RELEASE_BUILD_TIME"
+          echo "Published digest smoke: passed" >> "$GITHUB_STEP_SUMMARY"
